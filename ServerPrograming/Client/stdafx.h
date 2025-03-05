@@ -52,6 +52,15 @@ constexpr D3D12_RESOURCE_DESC BASIC_BUFFER_DESC = {
 };
 
 struct UVVertex {
+	UVVertex(XMFLOAT3 pos, XMFLOAT2 tex)
+	{
+		position = pos; uv = tex;
+	}
 	XMFLOAT3 position{};
 	XMFLOAT2 uv{};
 };
+
+inline constexpr UINT Align(UINT size, UINT alignment)
+{
+	return (size + (alignment - 1)) & ~(alignment - 1);
+}

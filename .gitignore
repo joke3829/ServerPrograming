@@ -34,4 +34,3 @@
 #directory
 *.vs/
 *x64/
-*src/

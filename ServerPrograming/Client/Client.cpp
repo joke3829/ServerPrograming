@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 #include "Client.h"
+#include "DDSTextureLoader12.h"
 
 #define MAX_LOADSTRING 100
 #define BUFFER_WIDTH 1000
@@ -39,11 +40,16 @@ ComPtr<ID3D12RootSignature> RootSignature{};
 ComPtr<ID3D12PipelineState> StandardPipeline{};
 
 ComPtr<ID3D12Resource> vertexBuffer{};  // 정점 버퍼(사각형)
-ComPtr<ID3D12Resource> WorldMatrix{};  
+XMFLOAT4X4* mappedpointer{};
 XMFLOAT4X4 playerMatrix{};
 
+ComPtr<ID3D12DescriptorHeap> ChessboardView{};
 ComPtr<ID3D12Resource> ChessboardTexture{};
+ComPtr<ID3D12Resource> BoardWorldMatrix{};
+
+ComPtr<ID3D12DescriptorHeap> ChessPieceView{};
 ComPtr<ID3D12Resource> ChessPieceTexture{};
+ComPtr<ID3D12Resource> PieceWorldMatrix{};  
 
 
 
@@ -63,7 +69,7 @@ void InitRTVDSV();
 void InitScene();
 void InitCameraMatrix();
 void InitMesh();
-void MakeTextureFromFile(const wchar_t* pszFileName, ComPtr<ID3D12Resource>& resource, bool bDDS = true);
+void MakeTextureFromFile(const wchar_t* pszFileName, ComPtr<ID3D12Resource>& resource, ComPtr<ID3D12DescriptorHeap>& view, bool bDDS = true);
 void InitRootSignature();
 void InitPipelineState();
 
@@ -183,6 +189,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message) {
     case WM_KEYDOWN:
+        switch (wParam) {
+        case VK_UP:
+            if(playerMatrix._42 < 437)
+                playerMatrix._42 += 125.0f;
+            break;
+        case VK_LEFT:
+            if(playerMatrix._41 > -437)
+                playerMatrix._41 -= 125.0f;
+            break;
+        case VK_DOWN:
+            if (playerMatrix._42 > -437)
+                playerMatrix._42 -= 125.0f;
+            break;
+        case VK_RIGHT:
+            if (playerMatrix._41 < 437)
+                playerMatrix._41 += 125.0f;
+            break;
+        }
         break;
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -332,11 +356,43 @@ void Render()
     float colors[] = { 0.5f, 0.5f, 1.0f, 1.0f };
     cmdList->ClearRenderTargetView(d3dCPUHandle, colors, 0, nullptr);
 
-    d3dCPUHandle = DepthStencilView->GetCPUDescriptorHandleForHeapStart();
-    cmdList->ClearDepthStencilView(d3dCPUHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+    D3D12_CPU_DESCRIPTOR_HANDLE d3dCPUdsvHandle = DepthStencilView->GetCPUDescriptorHandleForHeapStart();
+    cmdList->ClearDepthStencilView(d3dCPUdsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+    cmdList->OMSetRenderTargets(1, &d3dCPUHandle, TRUE, &d3dCPUdsvHandle);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = viewport.Height = BUFFER_WIDTH;
+    viewport.MaxDepth = 1.0f;
+
+    cmdList->RSSetViewports(1, &viewport);
+    D3D12_RECT sRect = { 0, 0 ,1000, 1000 };
+    cmdList->RSSetScissorRects(1, &sRect);
+
 
     // 렌더링 작업(Set & Draw) ===================
+    cmdList->SetGraphicsRootSignature(RootSignature.Get());
+    cmdList->SetGraphicsRootConstantBufferView(0, CameraMatrix->GetGPUVirtualAddress());
+    cmdList->SetPipelineState(StandardPipeline.Get());
+    
+    // 체스 판
+    cmdList->SetGraphicsRootConstantBufferView(1, BoardWorldMatrix->GetGPUVirtualAddress());
+    cmdList->SetDescriptorHeaps(1, ChessboardView.GetAddressOf());
+    cmdList->SetGraphicsRootDescriptorTable(2, ChessboardView->GetGPUDescriptorHandleForHeapStart());
 
+    cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D12_VERTEX_BUFFER_VIEW vview{};
+    vview.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+    vview.SizeInBytes = sizeof(UVVertex) * 6;
+    vview.StrideInBytes = sizeof(UVVertex);
+    cmdList->IASetVertexBuffers(0, 1, &vview);
+    cmdList->DrawInstanced(6, 1, 0, 0);
+
+
+    XMStoreFloat4x4(mappedpointer, XMMatrixTranspose(XMLoadFloat4x4(&playerMatrix)));
+    cmdList->SetGraphicsRootConstantBufferView(1, PieceWorldMatrix->GetGPUVirtualAddress());
+    cmdList->SetDescriptorHeaps(1, ChessPieceView.GetAddressOf());
+    cmdList->SetGraphicsRootDescriptorTable(2, ChessPieceView->GetGPUDescriptorHandleForHeapStart());
+    cmdList->DrawInstanced(6, 1, 0, 0);
     // ===========================================
 
     barrier(BackBuffer[nCurrentBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -350,18 +406,256 @@ void Render()
 
 void InitScene()
 {
+    InitCameraMatrix();
+    InitMesh();
+    MakeTextureFromFile(L"ChessBoard.dds", ChessboardTexture, ChessboardView);
+    MakeTextureFromFile(L"ChessPiece.dds", ChessPieceTexture, ChessPieceView);
+    InitRootSignature();
+    InitPipelineState();
 
+    XMStoreFloat4x4(&playerMatrix, XMMatrixIdentity());
+    playerMatrix._11 = playerMatrix._22 = 0.125f;
+    playerMatrix._43 = -5.0f;
+    playerMatrix._41 = playerMatrix._42 = 62.5;
 }
 
 void InitCameraMatrix()
 {
+    auto desc = BASIC_BUFFER_DESC;
+    desc.Width = Align(sizeof(XMFLOAT4X4), 256);
+    device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(CameraMatrix.GetAddressOf()));
+    device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(BoardWorldMatrix.GetAddressOf()));
+    device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(PieceWorldMatrix.GetAddressOf()));
 
+    BoardWorldMatrix->Map(0, nullptr, (void**)&mappedpointer);
+    XMStoreFloat4x4(mappedpointer, XMMatrixIdentity());
+    BoardWorldMatrix->Unmap(0, nullptr);
+    PieceWorldMatrix->Map(0, nullptr, (void**)&mappedpointer);
+
+    void* temp{};
+    XMFLOAT3 eye = XMFLOAT3(0.0, 0.0, -10.0);
+    XMFLOAT3 at = XMFLOAT3(0.0, 0.0, 1.0);
+    XMFLOAT3 up = XMFLOAT3(0.0, 1.0, 0.0);
+    XMMATRIX viewMat = XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&at), XMLoadFloat3(&up));
+    XMMATRIX ortho = XMMatrixOrthographicLH(BUFFER_WIDTH, BUFFER_HEIGHT, 0.0, 100.0f);
+
+    viewMat = viewMat * ortho;
+    CameraMatrix->Map(0, nullptr, &temp);
+    XMStoreFloat4x4((XMFLOAT4X4*)temp, XMMatrixTranspose(viewMat));
+    CameraMatrix->Unmap(0, nullptr);
 }
 
 void InitMesh()
 {
-    
+    ComPtr<ID3D12Resource> UploadBuffer{};
+    std::vector<UVVertex> pos{};
+    pos.push_back(UVVertex(XMFLOAT3(-500.0, 500.0, 0.0), XMFLOAT2(0.0, 0.0)));
+    pos.push_back(UVVertex(XMFLOAT3(500.0, 500.0, 0.0), XMFLOAT2(1.0, 0.0)));
+    pos.push_back(UVVertex(XMFLOAT3(-500.0, -500.0, 0.0), XMFLOAT2(0.0, 1.0)));
+
+    pos.push_back(UVVertex(XMFLOAT3(500.0, 500.0, 0.0), XMFLOAT2(1.0, 0.0)));
+    pos.push_back(UVVertex(XMFLOAT3(500.0, -500.0, 0.0), XMFLOAT2(1.0, 1.0)));
+    pos.push_back(UVVertex(XMFLOAT3(-500.0, -500.0, 0.0), XMFLOAT2(0.0, 1.0)));
+
+    auto desc = BASIC_BUFFER_DESC;
+    desc.Width = sizeof(UVVertex) * 6;
+    device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(UploadBuffer.GetAddressOf()));
+    device->CreateCommittedResource(&DEFAULT_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(vertexBuffer.GetAddressOf()));
+    void* temp{};
+    UploadBuffer->Map(0, nullptr, &temp);
+    memcpy(temp, pos.data(), sizeof(UVVertex) * 6);
+    UploadBuffer->Unmap(0, nullptr);
+
+
+
+    cmdAllocator->Reset();
+    cmdList->Reset(cmdAllocator.Get(), nullptr);
+
+    cmdList->CopyResource(vertexBuffer.Get(), UploadBuffer.Get());
+
+    D3D12_RESOURCE_BARRIER br{};
+    br.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    br.Transition.pResource = vertexBuffer.Get();
+    br.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    br.Transition.StateAfter = D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+    br.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+
+    cmdList->ResourceBarrier(1, &br);
+    cmdList->Close();
+    cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(cmdList.GetAddressOf()));
+    Flush();
+
 }
-void MakeTextureFromFile(const wchar_t* pszFileName, ComPtr<ID3D12Resource>& resource, bool bDDS = true);
-void InitRootSignature();
-void InitPipelineState();
+void MakeTextureFromFile(const wchar_t* pszFileName, ComPtr<ID3D12Resource>& resource, ComPtr<ID3D12DescriptorHeap>& view, bool bDDS)
+{
+    cmdAllocator->Reset();
+    cmdList->Reset(cmdAllocator.Get(), nullptr);
+    ComPtr<ID3D12Resource> pd3dUploadBuffer{};
+
+    std::unique_ptr<uint8_t[]> decodedData;	// dds 데이터로도 사용
+    std::vector<D3D12_SUBRESOURCE_DATA> vSubresources;
+    DDS_ALPHA_MODE ddsAlphaMode = DDS_ALPHA_MODE_UNKNOWN;
+    bool blsCubeMap = false;
+    D3D12_SUBRESOURCE_DATA subResourceData;
+    if (bDDS)
+        LoadDDSTextureFromFileEx(device.Get(), pszFileName, 0, D3D12_RESOURCE_FLAG_NONE, DDS_LOADER_DEFAULT, resource.GetAddressOf(), decodedData, vSubresources, &ddsAlphaMode, &blsCubeMap);
+
+
+    UINT64 nBytes{};
+    UINT nSubResource = (UINT)vSubresources.size();
+    if (bDDS) {
+        nBytes = GetRequiredIntermediateSize(resource.Get(), 0, nSubResource);
+    }
+    auto desc = BASIC_BUFFER_DESC;
+    desc.Width = nBytes;
+
+    device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&pd3dUploadBuffer));
+
+    if (bDDS)
+        ::UpdateSubresources(cmdList.Get() , resource.Get(), pd3dUploadBuffer.Get(), 0, 0, nSubResource, &vSubresources[0]);
+
+    D3D12_RESOURCE_BARRIER d3dRB;
+    ::ZeroMemory(&d3dRB, sizeof(D3D12_RESOURCE_BARRIER));
+    d3dRB.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    d3dRB.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+    d3dRB.Transition.pResource = resource.Get();
+    d3dRB.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+    d3dRB.Transition.StateAfter = D3D12_RESOURCE_STATE_GENERIC_READ;
+    d3dRB.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+
+    cmdList->ResourceBarrier(1, &d3dRB);
+
+    cmdList->Close();
+    cmdQueue->ExecuteCommandLists(1, reinterpret_cast<ID3D12CommandList**>(cmdList.GetAddressOf()));
+    Flush();
+
+    D3D12_DESCRIPTOR_HEAP_DESC ddesc{};
+    ddesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    ddesc.NumDescriptors = 1;
+    ddesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+
+    device->CreateDescriptorHeap(&ddesc, IID_PPV_ARGS(view.GetAddressOf()));
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    D3D12_RESOURCE_DESC d3dRD = resource->GetDesc();
+    srvDesc.Format = d3dRD.Format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2D.MipLevels = -1;
+
+    device->CreateShaderResourceView(resource.Get(), &srvDesc, view->GetCPUDescriptorHandleForHeapStart());
+}
+void InitRootSignature()
+{
+    D3D12_DESCRIPTOR_RANGE range{};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = 1;
+    range.BaseShaderRegister = 0;
+
+    D3D12_ROOT_PARAMETER params[3]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[1].Descriptor.ShaderRegister = 1;
+
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[2].DescriptorTable.NumDescriptorRanges = 1;
+    params[2].DescriptorTable.pDescriptorRanges = &range;
+
+    D3D12_STATIC_SAMPLER_DESC sdesc{};
+    sdesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sdesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sdesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    sdesc.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    sdesc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    sdesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sdesc.MaxAnisotropy = 1;
+    sdesc.MaxLOD = FLT_MAX;
+    sdesc.MinLOD = -FLT_MAX;
+
+    D3D12_ROOT_SIGNATURE_DESC desc{};
+    desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    desc.NumParameters = 3;
+    desc.NumStaticSamplers = 1;
+    desc.pParameters = params;
+    desc.pStaticSamplers = &sdesc;
+
+    ID3DBlob* blob{};
+    D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &blob, nullptr);
+    device->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(RootSignature.GetAddressOf()));
+    blob->Release();
+}
+void InitPipelineState()
+{
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};
+    desc.pRootSignature = RootSignature.Get();
+
+    D3D12_INPUT_ELEMENT_DESC edesc[2]{};
+    edesc[0] = { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    edesc[1] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 };
+    desc.InputLayout.NumElements = 2;
+    desc.InputLayout.pInputElementDescs = edesc;
+
+    desc.DepthStencilState.DepthEnable = TRUE;
+    desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    desc.DepthStencilState.StencilEnable = FALSE;
+    desc.DepthStencilState.StencilReadMask = 0x00;
+    desc.DepthStencilState.StencilWriteMask = 0x00;
+    desc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+    desc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+    desc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_NEVER;
+    desc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+    desc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+    desc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+    desc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_NEVER;
+    desc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+
+    desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    desc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    desc.RasterizerState.AntialiasedLineEnable = FALSE;
+    desc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+    desc.RasterizerState.DepthBias = 0;
+    desc.RasterizerState.DepthBiasClamp = 0.0f;
+    desc.RasterizerState.DepthClipEnable = TRUE;
+    desc.RasterizerState.ForcedSampleCount = 0;
+    desc.RasterizerState.FrontCounterClockwise = FALSE;
+    desc.RasterizerState.MultisampleEnable = FALSE;
+    desc.RasterizerState.SlopeScaledDepthBias = 0.0f;
+
+    desc.BlendState.AlphaToCoverageEnable = FALSE;
+    desc.BlendState.IndependentBlendEnable = FALSE;
+    desc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+    desc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+    desc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    desc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+    desc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+    desc.BlendState.RenderTarget[0].LogicOp = D3D12_LOGIC_OP_NOOP;
+    desc.BlendState.RenderTarget[0].LogicOpEnable = FALSE;
+    desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    desc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+    desc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+
+    desc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    desc.NumRenderTargets = 1;
+    desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.SampleMask = UINT_MAX;
+
+    ID3DBlob* vsBlob{};
+    D3DCompileFromFile(L"Shader.hlsl", nullptr, nullptr, "VSMain", "vs_5_1", 0, 0, &vsBlob, nullptr);
+    desc.VS.BytecodeLength = vsBlob->GetBufferSize();
+    desc.VS.pShaderBytecode = vsBlob->GetBufferPointer();
+
+    ID3DBlob* psBlob{};
+    D3DCompileFromFile(L"Shader.hlsl", nullptr, nullptr, "PSMain", "ps_5_1", 0, 0, &psBlob, nullptr);
+    desc.PS.BytecodeLength = psBlob->GetBufferSize();
+    desc.PS.pShaderBytecode = psBlob->GetBufferPointer();
+
+    device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(StandardPipeline.GetAddressOf()));
+
+    vsBlob->Release();
+    psBlob->Release();
+}

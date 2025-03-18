@@ -5,6 +5,20 @@
 
 constexpr short SERVER_PORT = 6487;
 
+void print_error_message(int s_err)
+{
+	WCHAR* lpMsgBuf;
+	FormatMessage(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER |
+		FORMAT_MESSAGE_FROM_SYSTEM,
+		NULL, s_err,
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		(LPTSTR)&lpMsgBuf, 0, NULL);
+	std::wcout << L" 에러 " << lpMsgBuf << std::endl;
+	while (true); // 디버깅 용
+	LocalFree(lpMsgBuf);
+}
+
 int main()
 {
 	WSADATA WSAData{};
@@ -32,7 +46,12 @@ int main()
 		DWORD recv_bytes{};
 		DWORD recv_flag{};
 		auto ret = WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
-
+		if (SOCKET_ERROR == ret) {
+			std::cout << "Error at WSARecv : Error Code - ";
+			auto s_err = WSAGetLastError();
+			std::cout << s_err << std::endl;
+			exit(-1);
+		}
 
 		recv_buffer[recv_bytes] = 0;
 

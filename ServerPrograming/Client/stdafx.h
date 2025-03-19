@@ -9,6 +9,7 @@
 // Windows 헤더 파일
 #include <windows.h>
 // C 런타임 헤더 파일입니다.
+#include <iostream>
 #include <stdlib.h>
 #include <malloc.h>
 #include <memory.h>
@@ -20,6 +21,7 @@
 #include <string>
 #include <fstream>
 #include <timeapi.h>
+#include <WS2tcpip.h>
 
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -34,6 +36,7 @@
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "Winmm.lib")
+#pragma comment(lib, "WS2_32")
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;

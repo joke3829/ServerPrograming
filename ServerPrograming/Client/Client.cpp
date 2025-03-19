@@ -51,7 +51,9 @@ ComPtr<ID3D12DescriptorHeap> ChessPieceView{};
 ComPtr<ID3D12Resource> ChessPieceTexture{};
 ComPtr<ID3D12Resource> PieceWorldMatrix{};  
 
-
+// 서버 통신용 변수
+SOCKET c_socket;
+constexpr short SERVER_PORT = 6487;
 
 // 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -76,15 +78,55 @@ void InitPipelineState();
 void Flush();
 void Render();
 
+void print_error_message(int s_err)
+{
+    WCHAR* lpMsgBuf;
+    FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_FROM_SYSTEM,
+        NULL, s_err,
+        MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPTSTR)&lpMsgBuf, 0, NULL);
+    std::wcout << L" 에러 " << lpMsgBuf << std::endl;
+    while (true); // 디버깅 용
+    LocalFree(lpMsgBuf);
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
                      _In_ LPWSTR    lpCmdLine,
                      _In_ int       nCmdShow)
 {
+    WSADATA WSAData{};
+    auto res = WSAStartup(MAKEWORD(2, 0), &WSAData);
+
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     // TODO: 여기에 코드를 입력합니다.
+    AllocConsole();
+    FILE* newStdout, *newStdin, *newStderr;
+
+    freopen_s(&newStdout, "CONOUT$", "w", stdout);
+    freopen_s(&newStdin, "CONIN$", "r", stdin);
+    freopen_s(&newStderr, "CONOUT$", "w", stderr);
+    char IPAddress[20]{};
+    std::cout << "Enter IP address: ";
+    std::cin >> IPAddress;
+
+    c_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
+    SOCKADDR_IN addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(SERVER_PORT);
+    inet_pton(AF_INET, IPAddress, &addr.sin_addr);
+    auto ret = WSAConnect(c_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(SOCKADDR_IN), nullptr, nullptr, nullptr, nullptr);
+    if (SOCKET_ERROR == ret) {
+        std::cout << "Error at WSARecv : Error Code - ";
+        auto s_err = WSAGetLastError();
+        std::cout << s_err << std::endl;
+        Sleep(2000);
+        exit(-1);
+    }
 
     // 전역 문자열을 초기화합니다.
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -103,13 +145,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     for (MSG msg;;) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT)
+            if (msg.message == WM_QUIT) {
+                FreeConsole();
+                closesocket(c_socket);
+                WSACleanup();
                 return 0;
+            }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
         Render();
     }
+    FreeConsole();
+    closesocket(c_socket);
+    WSACleanup();
 }
 
 
@@ -190,22 +239,82 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     switch (message) {
     case WM_KEYDOWN:
         switch (wParam) {
-        case VK_UP:
-            if(playerMatrix._42 < 437)
-                playerMatrix._42 += 125.0f;
+        case VK_UP: {
+            char buffer[1]{ 'w' };
+            WSABUF wsabuf[1]{};
+            wsabuf[0].buf = buffer;
+            wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
+            DWORD size_sent;
+            WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
+
+            float recv_buffer[2]{};
+            WSABUF recv_wsabuf[1]{};
+            recv_wsabuf[0].buf = (char*)recv_buffer;
+            recv_wsabuf[0].len = sizeof(recv_buffer);
+            DWORD recv_bytes{};
+            DWORD recv_flag{};
+            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
+
+            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
-        case VK_LEFT:
-            if(playerMatrix._41 > -437)
-                playerMatrix._41 -= 125.0f;
+        }
+        case VK_LEFT: {
+            char buffer[1]{ 'a' };
+            WSABUF wsabuf[1]{};
+            wsabuf[0].buf = buffer;
+            wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
+            DWORD size_sent;
+            WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
+
+            float recv_buffer[2]{};
+            WSABUF recv_wsabuf[1]{};
+            recv_wsabuf[0].buf = (char*)recv_buffer;
+            recv_wsabuf[0].len = sizeof(recv_buffer);
+            DWORD recv_bytes{};
+            DWORD recv_flag{};
+            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
+
+            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
-        case VK_DOWN:
-            if (playerMatrix._42 > -437)
-                playerMatrix._42 -= 125.0f;
+        }
+        case VK_DOWN: {
+            char buffer[1]{ 's' };
+            WSABUF wsabuf[1]{};
+            wsabuf[0].buf = buffer;
+            wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
+            DWORD size_sent;
+            WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
+
+            float recv_buffer[2]{};
+            WSABUF recv_wsabuf[1]{};
+            recv_wsabuf[0].buf = (char*)recv_buffer;
+            recv_wsabuf[0].len = sizeof(recv_buffer);
+            DWORD recv_bytes{};
+            DWORD recv_flag{};
+            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
+
+            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
-        case VK_RIGHT:
-            if (playerMatrix._41 < 437)
-                playerMatrix._41 += 125.0f;
+        }
+        case VK_RIGHT: {
+            char buffer[1]{ 'd' };
+            WSABUF wsabuf[1]{};
+            wsabuf[0].buf = buffer;
+            wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
+            DWORD size_sent;
+            WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
+
+            float recv_buffer[2]{};
+            WSABUF recv_wsabuf[1]{};
+            recv_wsabuf[0].buf = (char*)recv_buffer;
+            recv_wsabuf[0].len = sizeof(recv_buffer);
+            DWORD recv_bytes{};
+            DWORD recv_flag{};
+            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
+
+            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
+        }
         }
         break;
     case WM_DESTROY:

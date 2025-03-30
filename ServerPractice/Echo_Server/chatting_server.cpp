@@ -125,6 +125,11 @@ void CALLBACK g_send_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over
 void CALLBACK g_recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, DWORD flag)
 {
 	auto my_id = reinterpret_cast<long long>(p_over->hEvent);
+	if (0 != err || 0 == num_bytes) {
+		std::cout << my_id << " - logOut!" << std::endl;
+		g_users.erase(my_id);
+		return;
+	}
 	g_users[my_id].recv_callback(err, num_bytes, p_over, flag);
 }
 

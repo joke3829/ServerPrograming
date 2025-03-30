@@ -41,7 +41,7 @@ ComPtr<ID3D12PipelineState> StandardPipeline{};
 
 ComPtr<ID3D12Resource> vertexBuffer{};  // 정점 버퍼(사각형)
 XMFLOAT4X4* mappedpointer{};
-XMFLOAT4X4 playerMatrix{};
+//XMFLOAT4X4 playerMatrix{};
 
 ComPtr<ID3D12DescriptorHeap> ChessboardView{};
 ComPtr<ID3D12Resource> ChessboardTexture{};
@@ -49,11 +49,17 @@ ComPtr<ID3D12Resource> BoardWorldMatrix{};
 
 ComPtr<ID3D12DescriptorHeap> ChessPieceView{};
 ComPtr<ID3D12Resource> ChessPieceTexture{};
-ComPtr<ID3D12Resource> PieceWorldMatrix{};  
+//ComPtr<ID3D12Resource> PieceWorldMatrix{};  
+
+bool bFirst = true;
 
 // 서버 통신용 변수
 SOCKET c_socket;
 constexpr short SERVER_PORT = 6487;
+
+char recv_buffer[1024];
+WSABUF recv_wsabuf[1]{};
+WSAOVERLAPPED recv_over;
 
 // 이 코드 모듈에 포함된 함수의 선언을 전달합니다:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
@@ -78,6 +84,45 @@ void InitPipelineState();
 void Flush();
 void Render();
 
+void CALLBACK recv_callback(DWORD, DWORD, LPWSAOVERLAPPED, DWORD);
+//void CALLBACK send_callback(DWORD, DWORD, LPWSAOVERLAPPED, DWORD);
+
+void do_recv();
+
+struct MyUser {
+    MyUser()
+    {
+        XMStoreFloat4x4(&_xmf4x4WorldMatrix, XMMatrixIdentity());
+        _xmf4x4WorldMatrix._11 = _xmf4x4WorldMatrix._22 = 0.125f;
+        _xmf4x4WorldMatrix._43 = -5.0f;
+        _xmf4x4WorldMatrix._41 = _xmf4x4WorldMatrix._42 = 62.5;
+        auto desc = BASIC_BUFFER_DESC;
+        desc.Width = Align(sizeof(XMFLOAT4X4), 256);
+        device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(_worldBuffer.GetAddressOf()));
+        _worldBuffer->Map(0, nullptr, reinterpret_cast<void**>(&_mappedptr));
+    }
+
+    ~MyUser()
+    {
+        _worldBuffer->Unmap(0, nullptr);
+    }
+
+    void Render() const
+    {
+        if (0 != state) {
+            XMStoreFloat4x4(_mappedptr, XMMatrixTranspose(XMLoadFloat4x4(&_xmf4x4WorldMatrix)));
+            cmdList->SetGraphicsRootConstantBufferView(1, _worldBuffer->GetGPUVirtualAddress());
+            cmdList->DrawInstanced(6, 1, 0, 0);
+        }
+    }
+    int state{};
+    XMFLOAT4X4* _mappedptr;
+    XMFLOAT4X4 _xmf4x4WorldMatrix;
+    ComPtr<ID3D12Resource> _worldBuffer{};
+};
+
+std::vector<MyUser> g_users;
+
 void print_error_message(int s_err)
 {
     WCHAR* lpMsgBuf;
@@ -98,7 +143,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                      _In_ int       nCmdShow)
 {
     WSADATA WSAData{};
-    auto res = WSAStartup(MAKEWORD(2, 0), &WSAData);
+    auto res = WSAStartup(MAKEWORD(2, 2), &WSAData);
 
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
@@ -114,7 +159,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     std::cout << "Enter IP address: ";
     std::cin >> IPAddress;
 
-    c_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, 0);
+    c_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);
     SOCKADDR_IN addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(SERVER_PORT);
@@ -127,6 +172,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         Sleep(2000);
         exit(-1);
     }
+
+    recv_wsabuf[0].buf = recv_buffer;
+    recv_wsabuf[0].len = sizeof(recv_buffer);
 
     // 전역 문자열을 초기화합니다.
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -243,19 +291,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             char buffer[1]{ 'w' };
             WSABUF wsabuf[1]{};
             wsabuf[0].buf = buffer;
-            wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
+            wsabuf[0].len = 1;
             DWORD size_sent;
             WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
-
-            float recv_buffer[2]{};
-            WSABUF recv_wsabuf[1]{};
-            recv_wsabuf[0].buf = (char*)recv_buffer;
-            recv_wsabuf[0].len = sizeof(recv_buffer);
-            DWORD recv_bytes{};
-            DWORD recv_flag{};
-            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
-
-            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
         }
         case VK_LEFT: {
@@ -266,15 +304,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             DWORD size_sent;
             WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
 
-            float recv_buffer[2]{};
-            WSABUF recv_wsabuf[1]{};
-            recv_wsabuf[0].buf = (char*)recv_buffer;
-            recv_wsabuf[0].len = sizeof(recv_buffer);
-            DWORD recv_bytes{};
-            DWORD recv_flag{};
-            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
-
-            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
         }
         case VK_DOWN: {
@@ -284,16 +313,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
             DWORD size_sent;
             WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
-
-            float recv_buffer[2]{};
-            WSABUF recv_wsabuf[1]{};
-            recv_wsabuf[0].buf = (char*)recv_buffer;
-            recv_wsabuf[0].len = sizeof(recv_buffer);
-            DWORD recv_bytes{};
-            DWORD recv_flag{};
-            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
-
-            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
         }
         case VK_RIGHT: {
@@ -303,16 +322,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             wsabuf[0].len = static_cast<ULONG>(strlen(buffer));
             DWORD size_sent;
             WSASend(c_socket, wsabuf, 1, &size_sent, 0, nullptr, nullptr);
-
-            float recv_buffer[2]{};
-            WSABUF recv_wsabuf[1]{};
-            recv_wsabuf[0].buf = (char*)recv_buffer;
-            recv_wsabuf[0].len = sizeof(recv_buffer);
-            DWORD recv_bytes{};
-            DWORD recv_flag{};
-            WSARecv(c_socket, recv_wsabuf, 1, &recv_bytes, &recv_flag, nullptr, nullptr);
-
-            playerMatrix._41 = recv_buffer[0]; playerMatrix._42 = recv_buffer[1];
             break;
         }
         }
@@ -442,6 +451,12 @@ void Flush()
 
 void Render()
 {
+    if (bFirst) {
+        do_recv();
+        bFirst = false;
+    }
+    SleepEx(0, TRUE);
+
     auto barrier = [&](ID3D12Resource* pResource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
         {
             D3D12_RESOURCE_BARRIER resBarrier{};
@@ -497,11 +512,10 @@ void Render()
     cmdList->DrawInstanced(6, 1, 0, 0);
 
 
-    XMStoreFloat4x4(mappedpointer, XMMatrixTranspose(XMLoadFloat4x4(&playerMatrix)));
-    cmdList->SetGraphicsRootConstantBufferView(1, PieceWorldMatrix->GetGPUVirtualAddress());
     cmdList->SetDescriptorHeaps(1, ChessPieceView.GetAddressOf());
     cmdList->SetGraphicsRootDescriptorTable(2, ChessPieceView->GetGPUDescriptorHandleForHeapStart());
-    cmdList->DrawInstanced(6, 1, 0, 0);
+    for (MyUser& u : g_users)
+        u.Render();
     // ===========================================
 
     barrier(BackBuffer[nCurrentBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -522,10 +536,13 @@ void InitScene()
     InitRootSignature();
     InitPipelineState();
 
-    XMStoreFloat4x4(&playerMatrix, XMMatrixIdentity());
+    for(int i = 0 ; i < 10; ++i)
+        g_users.emplace_back();
+
+    /*XMStoreFloat4x4(&playerMatrix, XMMatrixIdentity());
     playerMatrix._11 = playerMatrix._22 = 0.125f;
     playerMatrix._43 = -5.0f;
-    playerMatrix._41 = playerMatrix._42 = 62.5;
+    playerMatrix._41 = playerMatrix._42 = 62.5;*/
 }
 
 void InitCameraMatrix()
@@ -534,12 +551,12 @@ void InitCameraMatrix()
     desc.Width = Align(sizeof(XMFLOAT4X4), 256);
     device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(CameraMatrix.GetAddressOf()));
     device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(BoardWorldMatrix.GetAddressOf()));
-    device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(PieceWorldMatrix.GetAddressOf()));
+    //device->CreateCommittedResource(&UPLOAD_HEAP, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(PieceWorldMatrix.GetAddressOf()));
 
     BoardWorldMatrix->Map(0, nullptr, (void**)&mappedpointer);
     XMStoreFloat4x4(mappedpointer, XMMatrixIdentity());
     BoardWorldMatrix->Unmap(0, nullptr);
-    PieceWorldMatrix->Map(0, nullptr, (void**)&mappedpointer);
+    //PieceWorldMatrix->Map(0, nullptr, (void**)&mappedpointer);
 
     void* temp{};
     XMFLOAT3 eye = XMFLOAT3(0.0, 0.0, -10.0);
@@ -768,3 +785,40 @@ void InitPipelineState()
     vsBlob->Release();
     psBlob->Release();
 }
+
+
+void do_recv()
+{
+    DWORD recv_flag{};
+    ZeroMemory(&recv_over, sizeof(recv_over));
+    int ret = WSARecv(c_socket, recv_wsabuf, 1, NULL, &recv_flag, &recv_over, recv_callback);
+    if (0 != ret) {
+        auto err_no = WSAGetLastError();
+        if (WSA_IO_PENDING != err_no) {
+            exit(-1);
+        }
+    }
+}
+
+void CALLBACK recv_callback(DWORD err, DWORD num_bytes, LPWSAOVERLAPPED p_over, DWORD flag)
+{
+    char* p = recv_buffer;
+    while (p < recv_buffer + num_bytes) {
+        int j = 0;
+        for (int i = 0; i < 10; ++i) {
+            long long id = static_cast<long long>(p[j]);
+            g_users[i].state = static_cast<long long>(p[j + 1]);
+            float pos[2]{};
+            memcpy(pos, &p[j + 2], sizeof(float) * 2);
+            g_users[i]._xmf4x4WorldMatrix._41 = pos[0]; g_users[i]._xmf4x4WorldMatrix._42 = pos[1];
+            j += 10;
+        }
+        p += 100;
+    }
+
+    do_recv();
+}
+//void CALLBACK send_callback(DWORD err, DWORD , LPWSAOVERLAPPED, DWORD)
+//{
+//
+//}

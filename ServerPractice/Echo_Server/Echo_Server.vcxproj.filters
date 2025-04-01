@@ -24,5 +24,8 @@
     <ClCompile Include="chatting_server.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
+    <ClCompile Include="IOCP_Echo.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

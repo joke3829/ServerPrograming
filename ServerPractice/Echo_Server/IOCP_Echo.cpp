@@ -16,7 +16,7 @@ public:
 	}
 	//private:
 	WSAOVERLAPPED _over;
-	long long _is_recv;
+	bool _is_recv;
 	char _buffer[1024];
 	WSABUF _wsabuf[1];
 };
@@ -91,6 +91,7 @@ int main()
 	}
 
 	EXP_OVER recv_over(true);
+	EXP_OVER send_over(false);
 
 	do_recv(c_socket, &recv_over);
 
@@ -99,28 +100,20 @@ int main()
 		WSAOVERLAPPED* o;
 		ULONG_PTR key;
 		BOOL ret = GetQueuedCompletionStatus(hIOCP, &io_size, &key, &o, INFINITE);
-		if (o->hEvent == IO_READ) {
-			recv_buffer[io_size] = 0;
-			std::cout << "From Client: " << recv_buffer << std::endl;
+		EXP_OVER* eo = reinterpret_cast<EXP_OVER*>(o);
+		if (eo->_is_recv == true) {
+			eo->_buffer[io_size] = 0;
+			std::cout << "From Client: " << eo->_buffer << std::endl;
 
 
-			memcpy(send_buffer, recv_buffer, io_size);
-
-
-			send_wsabuf[0].buf = send_buffer;
-			send_wsabuf[0].len = io_size;
-
-			ZeroMemory(&send_over, sizeof(send_over));
-			send_over.hEvent = IO_SEND;
+			memcpy(send_over._buffer, eo->_buffer, io_size);
+			send_over._wsabuf[0].len = io_size;
+			ZeroMemory(&send_over._over, sizeof(send_over._over));
 			DWORD size_sent;
-			WSASend(c_socket, send_wsabuf, 1, &size_sent, 0, &send_over, 0);
-		}
-		else if (o->hEvent == IO_SEND) {
-			do_recv(c_socket, recv_wsabuf, &recv_over);
+			WSASend(c_socket, send_over._wsabuf, 1, &size_sent, 0, &send_over._over, 0);
 		}
 		else {
-			std::cout << "Invalid IO Error\n";
-			exit(-1);
+			do_recv(c_socket, &recv_over);
 		}
 	}
 

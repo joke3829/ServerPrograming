@@ -46,7 +46,7 @@ void print_error_message(int s_err)
 		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 		(LPTSTR)&lpMsgBuf, 0, NULL);
 	std::wcout << lpMsgBuf << std::endl;
-	while (true);   // µð¹ö±ë ¿ë
+	//while (true);   // µð¹ö±ë ¿ë
 	LocalFree(lpMsgBuf);
 }
 
@@ -75,6 +75,14 @@ public:
 	}
 	~SESSION()
 	{
+		sc_packet_leave lp;
+		lp.size = sizeof(lp);
+		lp.type = S2C_P_LEAVE;
+		lp.id = _id;
+		for (auto& u : g_users) {
+			if (_id != u.first)
+				u.second.do_send(&lp);
+		}
 		closesocket(_c_socket);
 	}
 
@@ -149,7 +157,15 @@ public:
 			case MOVE_LEFT: if (_x > 0) _x = _x - 1; break;
 			case MOVE_RIGHT: if (_x < (MAP_WIDTH - 1)) _x = _x + 1; break;
 			}
-			send_player_position();
+
+			sc_packet_move mp;
+			mp.size = sizeof(mp);
+			mp.type = S2C_P_MOVE;
+			mp.id = _id;
+			mp.x = _x; mp.y = _y;
+			for (auto& u : g_users) {
+				u.second.do_send(&mp);
+			}
 			break;
 		}
 		default:  
@@ -203,6 +219,17 @@ int main()
 		ULONG_PTR key;
 		BOOL ret = GetQueuedCompletionStatus(g_hIOCP, &io_size, &key, &o, INFINITE);
 		EXP_OVER* eo = reinterpret_cast<EXP_OVER*>(o);
+		if (FALSE == ret) {
+			auto err_no = WSAGetLastError();
+			print_error_message(err_no);
+			if(g_users.count(key) != 0)
+				g_users.erase(key);
+		}
+		if ((eo->_io_op == IO_RECV || eo->_io_op == IO_SEND) && (0 == io_size)) {
+			if (g_users.count(key) != 0)
+				g_users.erase(key);
+			continue;
+		}
 		switch (eo->_io_op) {
 		case IO_ACCEPT :
 			CreateIoCompletionPort(reinterpret_cast<HANDLE>(eo->_accept_socket), g_hIOCP, new_id, 0);

@@ -15,10 +15,13 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="IOCP_Server.cpp">
+    <ClCompile Include="iocp_server.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="iocp_servert.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="MultiThread_iocp_server.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>

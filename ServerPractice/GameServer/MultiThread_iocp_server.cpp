@@ -2,6 +2,9 @@
 #include <unordered_map>
 #include <WS2tcpip.h>
 #include <MSWSock.h>
+#include <thread>
+#include <vector>
+#include <atomic>
 
 #include "Protocol.h"
 
@@ -13,6 +16,8 @@ constexpr short SERVER_PORT = 3000;
 enum IO_OP { IO_RECV, IO_SEND, IO_ACCEPT };
 
 HANDLE g_hIOCP;
+SOCKET g_s_socket;
+std::atomic<int> g_new_id = 0;
 
 class EXP_OVER
 {
@@ -21,7 +26,7 @@ public:
 	{
 		ZeroMemory(&_over, sizeof(_over));
 
-		_wsabuf[0].buf = reinterpret_cast<CHAR *>(_buffer);
+		_wsabuf[0].buf = reinterpret_cast<CHAR*>(_buffer);
 		_wsabuf[0].len = sizeof(_buffer);
 	}
 
@@ -89,10 +94,10 @@ public:
 	{
 		DWORD recv_flag = 0;
 		ZeroMemory(&_recv_over._over, sizeof(_recv_over._over));
-		_recv_over._wsabuf[0].buf = reinterpret_cast<CHAR *>(_recv_over._buffer + _remained);
+		_recv_over._wsabuf[0].buf = reinterpret_cast<CHAR*>(_recv_over._buffer + _remained);
 		_recv_over._wsabuf[0].len = sizeof(_recv_over._buffer) - _remained;
 
-		auto ret = WSARecv(_c_socket, _recv_over._wsabuf, 1, NULL, 
+		auto ret = WSARecv(_c_socket, _recv_over._wsabuf, 1, NULL,
 			&recv_flag, &_recv_over._over, NULL);
 		if (0 != ret) {
 			auto err_no = WSAGetLastError();
@@ -102,10 +107,10 @@ public:
 			}
 		}
 	}
-	void do_send(void *buff)
+	void do_send(void* buff)
 	{
 		EXP_OVER* o = new EXP_OVER(IO_SEND);
-		const unsigned char packet_size = reinterpret_cast<unsigned char *>(buff)[0];
+		const unsigned char packet_size = reinterpret_cast<unsigned char*>(buff)[0];
 		memcpy(o->_buffer, buff, packet_size);
 		o->_wsabuf[0].len = packet_size;
 		DWORD size_sent;
@@ -141,7 +146,7 @@ public:
 	{
 		const unsigned char packet_type = p[1];
 		switch (packet_type) {
-		case C2S_P_LOGIN :
+		case C2S_P_LOGIN:
 		{
 			cs_packet_login* packet = reinterpret_cast<cs_packet_login*>(p);
 			_name = packet->name;
@@ -198,49 +203,15 @@ public:
 			}
 			break;
 		}
-		default: 
+		default:
 			std::cout << "Error Invalid Packet Type\n";
 			exit(-1);
 		}
 	}
 };
 
-void do_accept(SOCKET s_socket, EXP_OVER *accept_over)
+void worker()
 {
-	SOCKET c_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);;
-	accept_over->_accept_socket = c_socket;
-	AcceptEx(s_socket, c_socket, accept_over->_buffer, 0,
-		sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16,
-		NULL, &accept_over->_over);
-}
-
-int main()
-{
-	std::wcout.imbue(std::locale("korean"));
-
-	WSADATA WSAData;
-	WSAStartup(MAKEWORD(2, 0), &WSAData);
-
-	SOCKET s_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);;
-	if (s_socket <= 0) std::cout << "ERRPR" << "원인";
-	else std::cout << "Socket Created.\n";
-
-	SOCKADDR_IN addr;
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(SERVER_PORT);
-	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	bind(s_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(SOCKADDR_IN));
-	listen(s_socket, SOMAXCONN);
-	INT addr_size = sizeof(SOCKADDR_IN);
-
-	g_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0);
-	CreateIoCompletionPort(reinterpret_cast<HANDLE>(s_socket), g_hIOCP, -1, 0);
-
-	EXP_OVER	accept_over(IO_ACCEPT);
-
-	do_accept(s_socket, &accept_over);
-
-	int new_id = 0;
 	while (true) {
 		DWORD io_size;
 		WSAOVERLAPPED* o;
@@ -260,7 +231,8 @@ int main()
 			continue;
 		}
 		switch (eo->_io_op) {
-		case IO_ACCEPT :
+		case IO_ACCEPT:
+			int new_id = g_new_id++;
 			CreateIoCompletionPort(reinterpret_cast<HANDLE>(eo->_accept_socket),
 				g_hIOCP, new_id, 0);
 			g_users.try_emplace(new_id, new_id, eo->_accept_socket);
@@ -268,11 +240,11 @@ int main()
 			new_id++;
 			do_accept(s_socket, &accept_over);
 			break;
-		case IO_SEND :
+		case IO_SEND:
 			delete eo;
 			break;
-		case IO_RECV :
-			SESSION &user = g_users[key];
+		case IO_RECV:
+			SESSION& user = g_users[key];
 			unsigned char* p = eo->_buffer;
 			int data_size = io_size + user._remained;
 
@@ -295,6 +267,49 @@ int main()
 			break;
 		}
 	}
+}
+
+void do_accept(SOCKET s_socket, EXP_OVER* accept_over)
+{
+	SOCKET c_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);;
+	accept_over->_accept_socket = c_socket;
+	AcceptEx(s_socket, c_socket, accept_over->_buffer, 0,
+		sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16,
+		NULL, &accept_over->_over);
+}
+
+int main()
+{
+	std::wcout.imbue(std::locale("korean"));
+
+	WSADATA WSAData;
+	WSAStartup(MAKEWORD(2, 0), &WSAData);
+
+	g_s_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);;
+	if (s_socket <= 0) std::cout << "ERRPR" << "원인";
+	else std::cout << "Socket Created.\n";
+
+	SOCKADDR_IN addr;
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(SERVER_PORT);
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+	bind(s_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(SOCKADDR_IN));
+	listen(s_socket, SOMAXCONN);
+	INT addr_size = sizeof(SOCKADDR_IN);
+
+	g_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0);
+	CreateIoCompletionPort(reinterpret_cast<HANDLE>(s_socket), g_hIOCP, -1, 0);
+
+	EXP_OVER	accept_over(IO_ACCEPT);
+
+	do_accept(s_socket, &accept_over);
+
+	// 코어 개수 알아내기
+	auto num_core = std::thread::hardware_concurrency();	// 하이퍼 스레드도 같이 나옴
+	std::vector<std::thread> workers;
+	for (int i = 0; i < num_core; ++i)
+		workers.emplace_back(worker);
+
 	closesocket(s_socket);
 	WSACleanup();
 }

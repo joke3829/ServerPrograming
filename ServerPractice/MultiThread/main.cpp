@@ -57,5 +57,4 @@ int main()
 		auto ms = duration_cast<milliseconds>(exec_t).count();
 		std::cout << i << "Threads Sum: " << sum << ", time - " << ms << "ms" << std::endl;
 	}
-	int n{};
 }

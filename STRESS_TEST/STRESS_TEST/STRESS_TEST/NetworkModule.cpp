@@ -57,16 +57,16 @@ struct CLIENT {
 	high_resolution_clock::time_point last_move_time;
 };
 
-array<int, MAX_CLIENTS> client_map;
+array<int, MAX_CLIENTS> client_map;		// 서버 id로 클라이언트 찾는 맵
 array<CLIENT, MAX_CLIENTS> g_clients;
 atomic_int num_connections;
 atomic_int client_to_close;
-atomic_int active_clients;
+atomic_int active_clients;				// 살아있는 클라이언트 수
 
 int			global_delay;				// ms단위, 1000이 넘으면 클라이언트 증가 종료
 
 vector <thread*> worker_threads;
-thread test_thread;
+thread test_thread;						// 인공지능 스레드
 
 float point_cloud[MAX_TEST * 2];
 

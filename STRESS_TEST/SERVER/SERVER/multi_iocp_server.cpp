@@ -99,7 +99,7 @@ public:
 	}
 };
 
-array<SESSION, MAX_USER> clients;
+array<SESSION, MAX_USER> clients;		// map으로 변경하기 (unordered, concurrent)
 
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
@@ -144,6 +144,8 @@ void process_packet(int c_id, char* packet)
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		strcpy_s(clients[c_id]._name, p->name);
+		clients[c_id].x = rand() % 400;
+		clients[c_id].y = rand() % 400;
 		clients[c_id].send_login_info_packet();
 		{
 			lock_guard<mutex> ll{ clients[c_id]._s_lock };

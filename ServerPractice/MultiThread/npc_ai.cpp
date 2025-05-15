@@ -92,7 +92,7 @@ public:
 		lp.size = sizeof(lp);
 		lp.type = S2C_P_LEAVE;
 		lp.id = _id;
-		for (auto& u : g_users) {
+		for (auto& u : g_objects) {
 			if (_id != u.first) {
 				std::shared_ptr<SESSION> p = u.second;
 				if ((nullptr != p) && (p->_state == ST_INGAME))
@@ -176,7 +176,7 @@ public:
 			ep.x = _x;
 			ep.y = _y;
 
-			for (auto& u : g_users) {
+			for (auto& u : g_objects) {
 				if (u.first != _id) {
 					std::shared_ptr<SESSION> p = u.second;
 					if ((nullptr != p) && (p->_state == ST_INGAME))
@@ -184,7 +184,7 @@ public:
 				}
 			}
 
-			for (auto& u : g_users) {
+			for (auto& u : g_objects) {
 				if (u.first != _id) {
 					std::shared_ptr<SESSION> p = u.second;
 					if ((nullptr == p) || (p->_state != ST_INGAME))
@@ -217,7 +217,7 @@ public:
 			mp.id = _id;
 			mp.x = _x;
 			mp.y = _y;
-			for (auto& u : g_users) {
+			for (auto& u : g_objects) {
 				std::shared_ptr<SESSION> p = u.second;
 				if ((nullptr != p) && (p->_state == ST_INGAME))
 					p->do_send(&mp);
@@ -242,196 +242,98 @@ void do_accept(SOCKET s_socket, EXP_OVER* accept_over)
 		NULL, &accept_over->_over);
 }
 
-
-
 void worker()
-
 {
-
 	while (true) {
-
 		DWORD io_size;
-
 		WSAOVERLAPPED* o;
-
 		ULONG_PTR key;
-
 		BOOL ret = GetQueuedCompletionStatus(g_hIOCP, &io_size, &key, &o, INFINITE);
-
 		EXP_OVER* eo = reinterpret_cast<EXP_OVER*>(o);
-
 		if (FALSE == ret) {
-
 			auto err_no = WSAGetLastError();
-
 			print_error_message(err_no);
-
-			if (g_users.count(key) != 0)
-
-				g_users.at(key) = nullptr;
-
+			if (g_objects.count(key) != 0)
+				g_objects.at(key) = nullptr;
 			continue;
-
 		}
-
 		if ((eo->_io_op == IO_RECV || eo->_io_op == IO_SEND) && (0 == io_size)) {
-
-			if (g_users.count(key) != 0)
-
-				g_users.at(key) = nullptr;
-
+			if (g_objects.count(key) != 0)
+				g_objects.at(key) = nullptr;
 			continue;
-
 		}
-
 		switch (eo->_io_op) {
-
 		case IO_ACCEPT:
-
 		{
-
 			int new_id = g_new_id++;
-
 			CreateIoCompletionPort(reinterpret_cast<HANDLE>(eo->_accept_socket),
-
 				g_hIOCP, new_id, 0);
-
 			std::shared_ptr<SESSION> p = std::make_shared<SESSION>(new_id, eo->_accept_socket);
-
-			g_users.insert(std::make_pair(new_id, p));
-
+			g_objects.insert(std::make_pair(new_id, p));
 			p->do_recv();
-
 			do_accept(g_s_socket, &g_accept_over);
-
 		}
-
 		break;
-
 		case IO_SEND:
-
 			delete eo;
-
 			break;
-
 		case IO_RECV:
-
-			std::shared_ptr<SESSION> user = g_users.at(key);
-
+			std::shared_ptr<SESSION> user = g_objects.at(key);
 			if (nullptr == user)
-
 				break;
-
 			unsigned char* p = eo->_buffer;
-
 			int data_size = io_size + user->_remained;
 
-
-
 			while (p < eo->_buffer + data_size) {
-
 				unsigned char packet_size = *p;
-
 				if (p + packet_size > eo->_buffer + data_size)
-
 					break;
-
 				user->process_packet(p);
-
 				p = p + packet_size;
-
 			}
-
-
 
 			if (p < eo->_buffer + data_size) {
-
 				user->_remained = static_cast<unsigned char>(eo->_buffer + data_size - p);
-
 				memcpy(p, eo->_buffer, user->_remained);
-
 			}
-
 			else
-
 				user->_remained = 0;
-
 			user->do_recv();
-
 			break;
-
 		}
-
 	}
-
 }
 
-
-
-
-
 int main()
-
 {
-
 	std::wcout.imbue(std::locale("korean"));
 
-
-
 	WSADATA WSAData;
-
 	WSAStartup(MAKEWORD(2, 0), &WSAData);
 
-
-
 	g_s_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, 0, 0, WSA_FLAG_OVERLAPPED);;
-
 	if (g_s_socket <= 0) std::cout << "ERRPR" << "¿øÀÎ";
-
 	else std::cout << "Socket Created.\n";
 
-
-
 	SOCKADDR_IN addr;
-
 	addr.sin_family = AF_INET;
-
 	addr.sin_port = htons(SERVER_PORT);
-
 	addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
 	bind(g_s_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(SOCKADDR_IN));
-
 	listen(g_s_socket, SOMAXCONN);
-
 	INT addr_size = sizeof(SOCKADDR_IN);
 
-
-
 	g_hIOCP = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, NULL, 0);
-
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_s_socket), g_hIOCP, -1, 0);
-
-
 
 	do_accept(g_s_socket, &g_accept_over);
 
-
-
 	auto num_core = std::thread::hardware_concurrency();
-
 	std::vector <std::thread> workers;
-
 	for (unsigned int i = 0; i < num_core; ++i)
-
 		workers.emplace_back(worker);
-
 	for (auto& w : workers)
-
 		w.join();
-
 	closesocket(g_s_socket);
-
 	WSACleanup();
-
 }

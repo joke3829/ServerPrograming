@@ -13,6 +13,6 @@ int main()
 	if (error) {
 		cout << "Error:" << lua_tostring(L, -1);
 		lua_pop(L, 1);
-	}
+	}	
 	lua_close(L);
 }

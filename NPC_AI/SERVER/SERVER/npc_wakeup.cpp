@@ -6,8 +6,8 @@
 #include <vector>
 #include <mutex>
 #include <unordered_set>
+#include <concurrent_priority_queue.h>
 #include <chrono>
-#include <queue>
 #include "protocol.h"
 
 #pragma comment(lib, "WS2_32.lib")
@@ -16,8 +16,21 @@ using namespace std;
 
 constexpr int VIEW_RANGE = 5;
 
+enum EVENT_TYPE { EV_RANDOM_MOVE };
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE };
+struct TIMER_EVENT {
+	int obj_id;
+	std::chrono::system_clock::time_point wakeup_time;
+	EVENT_TYPE event_id;
+	int target_id;
+	constexpr bool operator < (const TIMER_EVENT& L) const
+	{
+		return (wakeup_time > L.wakeup_time);
+	}
+};
+concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
+
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_AI_HELLO };
 class OVER_EXP {
 public:
 	WSAOVERLAPPED _over;
@@ -43,13 +56,13 @@ public:
 };
 
 enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
-enum EVENT_TYPE { EV_MOVE, EV_HEAL, EV_ATTACK };
 class SESSION {
 	OVER_EXP _recv_over;
 
 public:
 	mutex _s_lock;
 	S_STATE _state;
+	atomic_bool	_is_active;		// 주위에 플레이어가 있는가?
 	int _id;
 	SOCKET _socket;
 	short	x, y;
@@ -57,9 +70,7 @@ public:
 	int		_prev_remain;
 	unordered_set <int> _view_list;
 	mutex	_vl;
-	long long		last_move_time;
-
-	atomic<bool>	_is_active;
+	int		last_move_time;
 public:
 	SESSION()
 	{
@@ -117,33 +128,7 @@ public:
 		p.type = SC_REMOVE_OBJECT;
 		do_send(&p);
 	}
-	void wakeup()
-	{
-		using namespace chrono;
-
-		if (false == _is_active) {
-			_is_active = true;
-			timer_queue.emplace(event_type{ _id, high_resolution_clock::now() + 1s,
-				EV_MOVE, 0 });
-		}
-
-	}
 };
-
-struct event_type {
-	int obj_id;
-	chrono::high_resolution_clock::time_point wakeup_time;
-	EVENT_TYPE event_id;
-	int target_id;
-
-	constexpr bool operator < (const event_type& _Left) const
-	{
-		return (wakeup_time > _Left.wakeup_time);
-	}
-};
-
-priority_queue<event_type> timer_queue;
-mutex timer_lock;
 
 HANDLE h_iocp;
 array<SESSION, MAX_USER + MAX_NPC> clients;
@@ -236,6 +221,16 @@ int get_new_client_id()
 	return -1;
 }
 
+void WakeUpNPC(int npc_id, int waker)
+{
+	if (clients[npc_id]._is_active) return;
+	bool old_state = false;
+	if (false == atomic_compare_exchange_strong(&clients[npc_id]._is_active, &old_state, true))
+		return;
+	TIMER_EVENT ev{ npc_id, chrono::system_clock::now(), EV_RANDOM_MOVE, 0 };
+	timer_queue.push(ev);
+}
+
 void process_packet(int c_id, char* packet)
 {
 	switch (packet[1]) {
@@ -258,7 +253,7 @@ void process_packet(int c_id, char* packet)
 			if (false == can_see(c_id, pl._id))
 				continue;
 			if (is_pc(pl._id)) pl.send_add_player_packet(c_id);
-			else pl.wakeup();
+			else WakeUpNPC(pl._id, c_id);
 			clients[c_id].send_add_player_packet(pl._id);
 		}
 		break;
@@ -303,9 +298,7 @@ void process_packet(int c_id, char* packet)
 					clients[pl].send_add_player_packet(c_id);
 				}
 			}
-			else {
-				clients[pl].wakeup();
-			}
+			else WakeUpNPC(pl, c_id);
 
 			if (old_vlist.count(pl) == 0)
 				clients[c_id].send_add_player_packet(pl);
@@ -396,15 +389,6 @@ void do_npc_random_move(int npc_id)
 			}
 		}
 	}
-
-	using namespace chrono;
-	long long current_time = duration_cast<milliseconds>
-		(system_clock::now().time_since_epoch()).count();
-	if (MAX_USER == npc_id) {
-		std::cout << "MOVE : " << current_time - clients[npc_id].last_move_time << "ms.\n";
-	}
-
-	clients[npc_id].last_move_time = current_time;
 }
 
 void worker_thread(HANDLE h_iocp)
@@ -481,23 +465,32 @@ void worker_thread(HANDLE h_iocp)
 			delete ex_over;
 			break;
 		case OP_NPC_MOVE: {
-			using namespace chrono;
-
-			int npc_id = static_cast<int>(key);
-			do_npc_random_move(npc_id);
-			timer_lock.lock();
-			timer_queue.emplace(event_type{ npc_id, high_resolution_clock::now() + 1s, EV_MOVE, 0 });
-			timer_lock.unlock();
+			bool keep_alive = false;
+			for (int j = 0; j < MAX_USER; ++j) {
+				if (clients[j]._state != ST_INGAME) continue;
+				if (can_see(static_cast<int>(key), j)) {
+					keep_alive = true;
+					break;
+				}
+			}
+			if (true == keep_alive) {
+				do_npc_random_move(static_cast<int>(key));
+				TIMER_EVENT ev{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
+				timer_queue.push(ev);
+			}
+			else {
+				clients[key]._is_active = false;
+			}
 			delete ex_over;
 		}
 						break;
+
 		}
 	}
 }
 
 void InitializeNPC()
 {
-	using namespace chrono;
 	cout << "NPC intialize begin.\n";
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
 		clients[i].x = rand() % W_WIDTH;
@@ -505,65 +498,33 @@ void InitializeNPC()
 		clients[i]._id = i;
 		sprintf_s(clients[i]._name, "NPC%d", i);
 		clients[i]._state = ST_INGAME;
-		clients[i]._is_active = false;
 	}
 	cout << "NPC initialize end.\n";
-	//cout << "NPC move begin.\n";
-	//for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
-	//	timer_queue.emplace(event_type{ i, high_resolution_clock::now() + 1s, EV_MOVE, 0 });
-	//}
-	//cout << "NPC move begin done.\n";
-}
-
-void do_ai()
-{
-	while (true) {
-		for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
-			long long current_time = chrono::duration_cast<chrono::milliseconds>
-				(chrono::system_clock::now().time_since_epoch()).count();
-			if (clients[i].last_move_time < current_time - 1000) {
-				do_npc_random_move(i);
-				if (i == MAX_USER) {
-					std::cout << "MOVE : " << current_time - clients[i].last_move_time << "ms.\n";
-				}
-				clients[i].last_move_time = current_time;
-
-			}
-		}
-	}
 }
 
 void do_timer()
 {
-	using namespace chrono;
-	do {
-		do {
-			timer_lock.lock();
-			if (timer_queue.empty() == true) {
-				timer_lock.unlock();
+	while (true) {
+		TIMER_EVENT ev;
+		auto current_time = chrono::system_clock::now();
+		if (true == timer_queue.try_pop(ev)) {
+			if (ev.wakeup_time > current_time) {
+				timer_queue.push(ev);		// 최적화 필요
+				// timer_queue에 다시 넣지 않고 처리해야 한다.
+				this_thread::sleep_for(1ms);  // 실행시간이 아직 안되었으므로 잠시 대기
+				continue;
+			}
+			switch (ev.event_id) {
+			case EV_RANDOM_MOVE:
+				OVER_EXP* ov = new OVER_EXP;
+				ov->_comp_type = OP_NPC_MOVE;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
 				break;
 			}
-			auto& k = timer_queue.top();
-			if (k.wakeup_time > high_resolution_clock::now()) {
-				timer_lock.unlock();
-				break;
-			}
-			timer_lock.unlock();
-
-			switch (k.event_id) {
-			case EV_MOVE:
-				OVER_EXP* o = new OVER_EXP;
-				o->_comp_type = OP_NPC_MOVE;
-				PostQueuedCompletionStatus(h_iocp, 1, k.obj_id, &o->_over);
-				break;
-			}
-
-			timer_lock.lock();
-			timer_queue.pop();
-			timer_lock.unlock();
-		} while (true);
-		this_thread::sleep_for(chrono::milliseconds(10));
-	} while (true);
+			continue;		// 즉시 다음 작업 꺼내기
+		}
+		this_thread::sleep_for(1ms);   // timer_queue가 비어 있으니 잠시 기다렸다가 다시 시작
+	}
 }
 
 int main()
@@ -593,7 +554,6 @@ int main()
 	int num_threads = std::thread::hardware_concurrency();
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread, h_iocp);
-
 	thread timer_thread{ do_timer };
 	timer_thread.join();
 	for (auto& th : worker_threads)

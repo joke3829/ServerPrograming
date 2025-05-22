@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="npc_ai_lua.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
     <ClCompile Include="npc.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>

@@ -1,0 +1,51 @@
+#pragma once
+#include "stdafx.h"
+
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND };
+class EX_OVER {
+public:
+	EX_OVER()
+	{
+		_wsabuf.len = BUF_SIZE;
+		_wsabuf.buf = _send_buf;
+		_comp_type = OP_RECV;
+		ZeroMemory(&_over, sizeof(_over));
+	}
+
+	EX_OVER(char* p)
+	{
+		_wsabuf.len = p[0];
+		_wsabuf.buf = _send_buf;
+		ZeroMemory(&_over, sizeof(_over));
+		_comp_type = OP_SEND;
+		memcpy(_send_buf, p, p[0]);
+	}
+
+	WSAOVERLAPPED			_over;
+	WSABUF					_wsabuf;
+	char					_send_buf[BUF_SIZE]{};
+	COMP_TYPE				_comp_type;
+};
+
+class SESSION {
+public:
+	SESSION(long long id, SOCKET s);
+	~SESSION();
+
+	int getRemained() const { return _remained; }
+	char* getName() { return _name; }
+
+	void setRemained(int remained) { _remained = remained; }
+
+	void process_packet(char* packet);
+	void do_recv();
+protected:
+	long long				_id{};
+	SOCKET					_socket;
+
+	EX_OVER					_ex_over;
+	int						_remained{};
+
+	char					_name[MAX_ID_LENGTH];
+};
+

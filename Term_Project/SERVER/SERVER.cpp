@@ -2,6 +2,9 @@
 
 concurrency::concurrent_unordered_map<long long, std::atomic<std::shared_ptr<SESSION>>> g_users;
 
+std::mutex g_sl;
+std::array<std::array<std::unordered_set<long long>, MAP_WIDTH / SECTOR_SIZE>, MAP_HEIGHT / SECTOR_SIZE> g_sector;
+
 void CServer::SetUp()
 {
 	ReadySocket();
@@ -20,11 +23,24 @@ void CServer::worker_thread()
 		BOOL ret = GetQueuedCompletionStatus(_h_iocp, &num_bytes, &key, &over, INFINITE);
 		EX_OVER* ex_over = reinterpret_cast<EX_OVER*>(over);
 		if (ret == FALSE) {
-			std::cout << "잘못됐어요" << std::endl;
+			if (ex_over->_comp_type == OP_ACCEPT) std::cout << "Accept Error" << std::endl;
+			else {
+				std::cout << "잘못됐어요" << std::endl;
+				std::shared_ptr<SESSION> pp = g_users.at(key);
+				if (nullptr != pp) pp->disconnect();
+				g_users.at(key) = nullptr;
+				if (ex_over->_comp_type == OP_SEND)
+					delete ex_over;
+			}
 			continue;
 		}
 		if (0 == num_bytes && (ex_over->_comp_type == OP_RECV || ex_over->_comp_type == OP_SEND)) {
+			std::shared_ptr<SESSION> pp = g_users.at(key);
+			if (nullptr != pp) pp->disconnect();
+			g_users.at(key) = nullptr;
 			std::cout << "이상해요" << std::endl;
+			if (ex_over->_comp_type == OP_SEND)
+				delete ex_over;
 			continue;
 		}
 

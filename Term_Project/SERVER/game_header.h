@@ -3,7 +3,7 @@
 constexpr short GAME_PORT = 3000;
 constexpr short BUF_SIZE = 1024;
 
-constexpr short MAX_CHAT_LENGTH = 255;
+constexpr short MAX_CHAT_LENGTH = 128;
 
 constexpr int  MAX_USER = 100000;
 constexpr int  NUM_MONSTER = 200000;
@@ -22,6 +22,7 @@ constexpr char C2S_P_CHAT = 11;
 constexpr char C2S_P_TELEPORT = 12;		// 동접 테스트 할 때
 										// 시작마을의 HOTSPOT을 방지하기 위해 
 										// RANDOM TELEPORT할 때 사용
+constexpr char C2S_P_WARP = 13;
 
 constexpr char MAX_ID_LENGTH = 20;
 
@@ -30,7 +31,7 @@ constexpr char MOVE_DOWN = 2;
 constexpr char MOVE_LEFT = 3;
 constexpr char MOVE_RIGHT = 4;
 
-constexpr unsigned short MAP_HEIGHT = 2000;
+constexpr unsigned short MAP_HEIGHT = 2000;		//2000
 constexpr unsigned short MAP_WIDTH = 2000;
 
 #pragma pack (push, 1)
@@ -82,6 +83,7 @@ struct sc_packet_stat_change {
 	unsigned char size;
 	char type;
 	long long  id;
+	short max_hp;
 	short hp;
 	short level;
 	int   exp;
@@ -123,6 +125,12 @@ struct cs_packet_chat {
 struct cs_packet_teleport {
 	unsigned char  size;
 	char  type;
+};
+
+struct cs_packet_warp {
+	unsigned char size;
+	char type;
+	char zone;
 };
 
 #pragma pack (pop)

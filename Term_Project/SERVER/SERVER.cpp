@@ -5,17 +5,54 @@ concurrency::concurrent_unordered_map<long long, std::atomic<std::shared_ptr<SES
 std::mutex g_sl;
 std::array<std::array<std::unordered_set<long long>, MAP_WIDTH / SECTOR_SIZE>, MAP_HEIGHT / SECTOR_SIZE> g_sector;
 
+std::array<std::array<bool, MAP_WIDTH>, MAP_HEIGHT> g_obstacles;	// use [y][x]
+
+thread_local SQLHENV henv;
+thread_local SQLHDBC hdbc;
+thread_local SQLHSTMT hstmt = 0;
+thread_local SQLRETURN retcode;
+thread_local SQLWCHAR szName[MAX_ID_LENGTH];
+thread_local SQLINTEGER db_x, db_y, db_max_hp, db_hp, db_level, db_exp;
+thread_local SQLLEN cbName = 0, cb_db_x = 0, cb_db_y = 0, cb_db_max_hp = 0, cb_db_hp = 0, cb_db_level = 0, cb_db_exp = 0;
+
 void CServer::SetUp()
 {
 	ReadySocket();
 
+	// Read Map
+	std::ifstream inFile{ "map.bin", std::ios::binary };
+	for (int i = 0; i < MAP_WIDTH; ++i) {
+		inFile.read(reinterpret_cast<char*>(g_obstacles[i].data()), 2000);
+	}
+
 	// NPC Ready
+	ReadyNPC();
 
 	ReadyIOCP();
 }
 
 void CServer::worker_thread()
 {
+	retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);
+
+	if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+		retcode = SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);
+		if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+			retcode = SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);
+
+			if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+				SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"2020184003_TermProject", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+					// DataBase Connect SUCCESS
+
+				}
+			}
+		}
+	}
+
+
 	while (true) {
 		DWORD num_bytes;
 		ULONG_PTR key;
@@ -73,7 +110,8 @@ void CServer::worker_thread()
 			int remained = num_bytes + player->getRemained();
 			char* p = ex_over->_send_buf;
 			while (remained > 0) {
-				int packet_size = p[0];
+				unsigned char p0 = static_cast<unsigned char>(p[0]);
+				int packet_size = p0;
 				if (packet_size <= remained) {
 					player->process_packet(p);
 					p = p + packet_size;
@@ -90,6 +128,11 @@ void CServer::worker_thread()
 					break;
 		}
 	}
+
+	SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+	SQLDisconnect(hdbc);
+	SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+	SQLFreeHandle(SQL_HANDLE_ENV, henv);
 }
 
 void CServer::Run()
@@ -124,4 +167,9 @@ void CServer::ReadyIOCP()
 	_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	_ex_over._comp_type = OP_ACCEPT;
 	AcceptEx(_s_socket, _c_socket, _ex_over._send_buf, 0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, NULL, &_ex_over._over);
+}
+
+void CServer::ReadyNPC()
+{
+
 }

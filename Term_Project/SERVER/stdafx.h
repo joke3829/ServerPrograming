@@ -6,6 +6,8 @@
 #include <array>
 #include <unordered_set>
 #include <unordered_map>
+#include <string>
+#include <fstream>
 
 #define NOMINMAX
 #include <WS2tcpip.h>
@@ -13,6 +15,7 @@
 #include <thread>
 #include <mutex>
 #include <concurrent_unordered_map.h>
+#include <sqlext.h>
 
 #include "game_header.h"
 

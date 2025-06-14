@@ -4,6 +4,10 @@
 #include <unordered_map>
 #include <Windows.h>
 #include <chrono>
+#include <string>
+#include <list>
+#include <array>
+#include <fstream>
 using namespace std;
 
 #include "..\..\SERVER\game_header.h"
@@ -14,8 +18,10 @@ constexpr auto SCREEN_WIDTH = 20;		// 16
 constexpr auto SCREEN_HEIGHT = 20;
 
 constexpr auto TILE_WIDTH = 65;			// 65
-constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
-constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
+constexpr auto TILE_RECT_SIZE = 53;
+
+constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_RECT_SIZE;   // size of window
+constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_RECT_SIZE;
 
 int g_left_x;
 int g_top_y;
@@ -23,6 +29,21 @@ int g_myid;
 
 sf::RenderWindow* g_window;
 sf::Font g_font;
+
+sf::Text g_Systemmess;
+chrono::system_clock::time_point g_sysmess_time;
+
+sf::Text g_myChatMess;
+sf::Text g_ChatModState;
+bool g_chat;
+
+char chatbuf[MAX_CHAT_LENGTH];
+int chatlen = 0;
+
+std::list<std::string> chatlog;
+std::array<std::array<bool, MAP_WIDTH>, MAP_HEIGHT> g_obstacles;
+
+sf::Text g_myStat;
 
 class OBJECT {
 private:
@@ -36,10 +57,19 @@ public:
 	int id;
 	int m_x, m_y;
 	char name[MAX_ID_LENGTH];
+
+	short max_hp{};
+	short hp{};
+	short level{};
+	int exp{};
+	int need_exp{};
+
 	OBJECT(sf::Texture& t, int x, int y, int x2, int y2) {
 		m_showing = false;
 		m_sprite.setTexture(t);
 		m_sprite.setTextureRect(sf::IntRect(x, y, x2, y2));
+		float scale_size = static_cast<float>(TILE_RECT_SIZE) / static_cast<float>(x2);
+		m_sprite.setScale(scale_size, scale_size);
 		set_name("NONAME");
 		m_mess_end_time = chrono::system_clock::now();
 	}
@@ -69,8 +99,8 @@ public:
 	}
 	void draw() {
 		if (false == m_showing) return;
-		float rx = (m_x - g_left_x) * 65.0f + 1;
-		float ry = (m_y - g_top_y) * 65.0f + 1;
+		float rx = (m_x - g_left_x) * TILE_RECT_SIZE + 1;
+		float ry = (m_y - g_top_y) * TILE_RECT_SIZE + 1;
 		m_sprite.setPosition(rx, ry);
 		g_window->draw(m_sprite);
 		auto size = m_name.getGlobalBounds();
@@ -105,24 +135,51 @@ unordered_map <int, OBJECT> players;
 
 OBJECT white_tile;
 OBJECT black_tile;
+OBJECT obstacle_tile;
 
 sf::Texture* board;
 sf::Texture* pieces;
+sf::Texture* txtobstacle;
 
 void client_initialize()
 {
 	board = new sf::Texture;
 	pieces = new sf::Texture;
+	txtobstacle = new sf::Texture;
 	board->loadFromFile("chessmap.bmp");
 	pieces->loadFromFile("chess2.png");
+	txtobstacle->loadFromFile("brick.jpg");
 	if (false == g_font.loadFromFile("cour.ttf")) {
 		cout << "Font Loading Error!\n";
 		exit(-1);
 	}
 	white_tile = OBJECT{ *board, 5, 5, TILE_WIDTH, TILE_WIDTH };
 	black_tile = OBJECT{ *board, 69, 5, TILE_WIDTH, TILE_WIDTH };
+	obstacle_tile = OBJECT{ *txtobstacle, 0, 0, 400, 400 };
 	avatar = OBJECT{ *pieces, 128, 0, 64, 64 };
 	avatar.move(4, 4);
+
+	g_myChatMess.setFont(g_font);
+	g_myChatMess.setFillColor(sf::Color(255, 255, 255));
+	g_myChatMess.setStyle(sf::Text::Bold);
+
+	g_Systemmess.setFont(g_font);
+	g_Systemmess.setFillColor(sf::Color(255, 255, 255));
+	g_Systemmess.setStyle(sf::Text::Bold);
+
+	g_ChatModState.setFont(g_font);
+	g_ChatModState.setString("Chat Mod On!");
+	g_ChatModState.setFillColor(sf::Color(255, 255, 255));
+	g_ChatModState.setStyle(sf::Text::Bold);
+
+	g_myStat.setFont(g_font);
+	g_myStat.setFillColor(sf::Color(255, 255, 255));
+	g_myStat.setStyle(sf::Text::Bold);
+
+	std::ifstream inFile{ "map.bin", std::ios::binary };
+	for (int i = 0; i < MAP_WIDTH; ++i) {
+		inFile.read(reinterpret_cast<char*>(g_obstacles[i].data()), 2000);
+	}
 }
 
 void client_finish()
@@ -130,6 +187,7 @@ void client_finish()
 	players.clear();
 	delete board;
 	delete pieces;
+	delete txtobstacle;
 }
 
 void ProcessPacket(char* ptr)
@@ -142,13 +200,39 @@ void ProcessPacket(char* ptr)
 		sc_packet_avatar_info * packet = reinterpret_cast<sc_packet_avatar_info*>(ptr);
 		g_myid = packet->id;
 		avatar.id = g_myid;
+		avatar.max_hp = packet->max_hp;
+		avatar.hp = packet->hp;
+		avatar.level = packet->level;
+		avatar.exp = packet->exp;
+		avatar.need_exp = static_cast<int>(static_cast<float>(avatar.level) * 1.5);
 		avatar.move(packet->x, packet->y);
 		g_left_x = packet->x - SCREEN_WIDTH / 2;
 		g_top_y = packet->y - SCREEN_HEIGHT / 2;
 		avatar.show();
 	}
 	break;
-
+	case S2C_P_LOGIN_FAIL:
+	{
+		sc_packet_login_fail* packet = reinterpret_cast<sc_packet_login_fail*>(ptr);
+		switch (packet->reason) {
+		case 0:
+			std::cout << "알 수 없는 이유로 접속에 실패했습니다." << std::endl;
+			break;
+		case 1:
+			std::cout << "이미 로그인 중입니다." << std::endl;
+			break;
+		case 2:
+			std::cout << "부적절한 ID입니다." << std::endl;
+			break;
+		case 3:
+			std::cout << "현재 동접자가 너무 많습니다." << std::endl;
+			break;
+		}
+		char e;
+		std::cin >> e;
+		exit(0);
+	}
+	break;
 	case S2C_P_ENTER:
 	{
 		sc_packet_enter* my_packet = reinterpret_cast<sc_packet_enter*>(ptr);
@@ -164,6 +248,7 @@ void ProcessPacket(char* ptr)
 			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
 			players[id].id = id;
 			players[id].move(my_packet->x, my_packet->y);
+			strcpy_s(players[id].name, my_packet->name);
 			players[id].set_name(my_packet->name);
 			players[id].show();
 		}
@@ -203,19 +288,33 @@ void ProcessPacket(char* ptr)
 		}
 		break;
 	}
-	/*case SC_CHAT:
+	case S2C_P_CHAT:
 	{
-		SC_CHAT_PACKET* my_packet = reinterpret_cast<SC_CHAT_PACKET*>(ptr);
+		sc_packet_chat* my_packet = reinterpret_cast<sc_packet_chat*>(ptr);
 		int other_id = my_packet->id;
-		if (other_id == g_myid) {
-			avatar.set_chat(my_packet->mess);
+		if (-1 != other_id) {
+			if (other_id == g_myid) {
+				avatar.set_chat(my_packet->message);
+				std::string ch = avatar.name;
+				ch = ch + ": " + my_packet->message;
+				chatlog.push_front(ch);
+			}
+			else {
+				players[other_id].set_chat(my_packet->message);
+				std::string ch = players[other_id].name;
+				ch = ch + ": " + my_packet->message;
+				chatlog.push_front(ch);
+			}
 		}
-		else {
-			players[other_id].set_chat(my_packet->mess);
+		else
+			chatlog.emplace_front(my_packet->message);
+
+		while (chatlog.size() > 10) {
+			chatlog.pop_back();
 		}
 
 		break;
-	}*/
+	}
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[1]);
 	}
@@ -229,7 +328,7 @@ void process_data(char* net_buf, size_t io_byte)
 	static char packet_buffer[BUF_SIZE];
 
 	while (0 != io_byte) {
-		if (0 == in_packet_size) in_packet_size = ptr[0];
+		if (0 == in_packet_size) in_packet_size = static_cast<unsigned char>(ptr[0]);
 		if (io_byte + saved_packet_size >= in_packet_size) {
 			memcpy(packet_buffer + saved_packet_size, ptr, in_packet_size - saved_packet_size);
 			ProcessPacket(packet_buffer);
@@ -270,14 +369,20 @@ void client_main()
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;
 			if ((tile_x < 0) || (tile_y < 0)) continue;
-			if (0 ==(tile_x /3 + tile_y /3) % 2) {
-				white_tile.a_move(TILE_WIDTH * i, TILE_WIDTH * j);
-				white_tile.a_draw();
+			if (g_obstacles[tile_y][tile_x]) {
+				obstacle_tile.a_move(TILE_RECT_SIZE * i, TILE_RECT_SIZE * j);
+				obstacle_tile.a_draw();
 			}
-			else
-			{
-				black_tile.a_move(TILE_WIDTH * i, TILE_WIDTH * j);
-				black_tile.a_draw();
+			else {
+				if (0 == (tile_x / 3 + tile_y / 3) % 2) {
+					white_tile.a_move(TILE_RECT_SIZE * i, TILE_RECT_SIZE * j);
+					white_tile.a_draw();
+				}
+				else
+				{
+					black_tile.a_move(TILE_RECT_SIZE * i, TILE_RECT_SIZE * j);
+					black_tile.a_draw();
+				}
 			}
 		}
 	avatar.draw();
@@ -288,6 +393,33 @@ void client_main()
 	sprintf_s(buf, "(%d, %d)", avatar.m_x, avatar.m_y);
 	text.setString(buf);
 	g_window->draw(text);
+
+	char statbuf[100];
+	sprintf_s(statbuf, "HP: %d / %d\nLEVEL: %d\nEXP: %d / %d", avatar.hp, avatar.max_hp, avatar.level, avatar.exp, avatar.need_exp);
+	g_myStat.setString(statbuf);
+	g_myStat.setPosition(0, 50);
+	g_window->draw(g_myStat);
+
+	/*if (g_sysmess_time >= chrono::system_clock::now()) {
+		g_Systemmess.setPosition(0, 50);
+		g_window->draw(g_Systemmess);
+	}*/
+	if (g_chat) {
+		g_myChatMess.setString(chatbuf);
+		g_myChatMess.setPosition(0, 180);
+		g_window->draw(g_myChatMess);
+
+		g_ChatModState.setPosition(0, 150);
+		g_window->draw(g_ChatModState);
+	}
+
+	int y = 210;
+	for (auto& c : chatlog) {
+		g_Systemmess.setString(c);
+		g_Systemmess.setPosition(0, y);
+		g_window->draw(g_Systemmess);
+		y += 30;
+	}
 }
 
 void send_packet(void *packet)
@@ -313,12 +445,13 @@ int main()
 	p.size = sizeof(p);
 	p.type = C2S_P_LOGIN;
 
-	string player_name{ "P" };
-	player_name += to_string(GetCurrentProcessId());
-	
-	strcpy_s(p.name, player_name.c_str());
+	std::string playerName{};
+	std::cout << "Input Your Name(ID): ";
+	std::getline(std::cin, playerName);
+	strcpy_s(avatar.name, playerName.data());
+	avatar.set_name(avatar.name);
+	strcpy_s(p.name, avatar.name);
 	send_packet(&p);
-	avatar.set_name(p.name);
 
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "2D CLIENT");
 	g_window = &window;
@@ -330,9 +463,24 @@ int main()
 		{
 			if (event.type == sf::Event::Closed)
 				window.close();
+
+			if (event.type == sf::Event::TextEntered && g_chat) {
+				char ch = static_cast<char>(event.text.unicode);
+				if (event.text.unicode >= 32 && event.text.unicode <= 126) {
+					if (chatlen < MAX_CHAT_LENGTH - 1) {
+						chatbuf[chatlen++] = ch;
+						chatbuf[chatlen] = '\0'; 
+					}
+				}
+				// backspace
+				else if (event.text.unicode == 8 && chatlen > 0) {
+					chatbuf[--chatlen] = '\0';
+				}
+			}
 			if (event.type == sf::Event::KeyPressed) {
 				int direction = -1;
 				switch (event.key.code) {
+					if (!g_chat) {
 				case sf::Keyboard::Left:
 					direction = 2;
 					break;
@@ -345,8 +493,61 @@ int main()
 				case sf::Keyboard::Down:
 					direction = 1;
 					break;
+				case sf::Keyboard::Num1:{
+					cs_packet_warp p;
+					p.size = sizeof(p);
+					p.type = C2S_P_WARP;
+					p.zone = 1;
+					send_packet(&p);
+				}
+					break;
+				case sf::Keyboard::Num2: {
+					cs_packet_warp p;
+					p.size = sizeof(p);
+					p.type = C2S_P_WARP;
+					p.zone = 2;
+					send_packet(&p);
+				}
+									   break;
+				case sf::Keyboard::Num3: {
+					cs_packet_warp p;
+					p.size = sizeof(p);
+					p.type = C2S_P_WARP;
+					p.zone = 3;
+					send_packet(&p);
+				}
+									   break;
+				case sf::Keyboard::Num4: {
+					cs_packet_warp p;
+					p.size = sizeof(p);
+					p.type = C2S_P_WARP;
+					p.zone = 4;
+					send_packet(&p);
+				}
+									   break;
+				case sf::Keyboard::Num9: {
+					cs_packet_warp p;
+					p.size = sizeof(p);
+					p.type = C2S_P_WARP;
+					p.zone = 0;
+					send_packet(&p);
+				}
+									   break;
+					}
 				case sf::Keyboard::Escape:
 					window.close();
+					break;
+				case sf::Keyboard::Return:
+					if (g_chat && chatlen != 0) {
+						cs_packet_chat p;
+						p.size = sizeof(p);
+						p.type = C2S_P_CHAT;
+						strcpy_s(p.message, chatbuf);
+						send_packet(&p);
+						chatlen = 0;
+						chatbuf[0] = '\0';
+					}
+					g_chat = !g_chat;
 					break;
 				}
 				if (-1 != direction) {
@@ -356,7 +557,6 @@ int main()
 					p.direction = direction;
 					send_packet(&p);
 				}
-
 			}
 		}
 

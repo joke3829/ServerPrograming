@@ -12,6 +12,7 @@ public:
 protected:
 	void ReadySocket();
 	void ReadyIOCP();
+	void ReadyNPC();
 
 	SOCKET			_s_socket;
 	SOCKET			_c_socket;

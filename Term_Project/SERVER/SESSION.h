@@ -14,11 +14,12 @@ public:
 
 	EX_OVER(char* p)
 	{
-		_wsabuf.len = p[0];
+		unsigned char p0 = static_cast<unsigned char>(p[0]);
+		_wsabuf.len = p0;
 		_wsabuf.buf = _send_buf;
 		ZeroMemory(&_over, sizeof(_over));
 		_comp_type = OP_SEND;
-		memcpy(_send_buf, p, p[0]);
+		memcpy(_send_buf, p, p0);
 	}
 
 	WSAOVERLAPPED			_over;
@@ -43,14 +44,21 @@ public:
 	void process_packet(char* packet);
 	void do_recv();
 
-	void do_send_avatar_info(short max_hp = 100, short hp = 100, short level = 1, int exp = 0);
+	void do_send_avatar_info();
+	void do_send_login_fail(short reason = 0);
+
 	void do_send_player_enter(long long id, int type = 0);
 	void do_send_player_leave(long long id);
+
+	void do_send_chat_packet(char* str, long long id = -1);
+
 	void do_send_move();
 	void do_send_move(long long id);
 	void do_send(void* packet);
 
 	void disconnect();
+
+
 protected:
 	long long				_id{};
 	SOCKET					_socket;
@@ -60,6 +68,9 @@ protected:
 
 	char					_name[MAX_ID_LENGTH];
 	short					_x, _y;
+
+	short					_max_hp, _hp;
+	short					_level, _exp;
 
 	std::mutex				_s_lock;
 	S_STATE					_state;

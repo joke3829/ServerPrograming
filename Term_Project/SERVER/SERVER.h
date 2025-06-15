@@ -8,6 +8,8 @@ public:
 
 	void worker_thread();
 
+	void Timer_thread();
+
 	void Run();
 protected:
 	void ReadySocket();

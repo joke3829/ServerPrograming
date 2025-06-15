@@ -14,6 +14,9 @@ extern thread_local SQLWCHAR szName[MAX_ID_LENGTH];
 extern thread_local SQLINTEGER db_x, db_y, db_max_hp, db_hp, db_level, db_exp;
 extern thread_local SQLLEN cbName, cb_db_x, cb_db_y, cb_db_max_hp, cb_db_hp, cb_db_level, cb_db_exp;
 
+std::mutex g_tl;
+std::priority_queue<event_type> g_eventq;
+
 bool can_see(short x1, short y1, short x2, short y2)
 {
 	if (abs(x1 - x2) > VIEW_RANGE) return false;
@@ -39,6 +42,23 @@ void SESSION::process_packet(char* packet)
 
 		std::wstring sqlcommand{ L"EXEC Get_User_Info " };
 		std::string sName{ p->name };
+
+		for (int i = 0; i < MAX_USER; ++i) {
+			if (g_users.count(i)) {
+				std::shared_ptr<SESSION> cl = g_users.at(i);
+				if (cl != nullptr) {
+					if (!strcmp(cl->_name, p->name)) {
+						do_send_login_fail(1);
+						return;
+					}
+				}
+			}
+		}
+
+		if (sName.size() >= 20) {
+			do_send_login_fail(2);
+			return;
+		}
 		for (auto& c : sName) {
 			if (false == isalpha(c) && false == isdigit(c)) {
 				do_send_login_fail(2);
@@ -58,19 +78,34 @@ void SESSION::process_packet(char* packet)
 			retcode = SQLBindCol(hstmt, 6, SQL_C_LONG, &db_y, 4, &cb_db_y);
 			retcode = SQLFetch(hstmt);
 			SQLCloseCursor(hstmt);
-			if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {
-				do_send_login_fail(0);
-				break;
+			if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO) {	// Create New ID
+				sqlcommand = L"EXEC Insert_New_User ";
+
+				strcpy_s(_name, p->name);
+				_x = (rand() % 500) + 750;
+				_y = (rand() % 500) + 750;
+
+				_max_hp = 100; _hp = 100;
+				_level = 1; _exp = 0;
+				_need_exp = 100 * pow(2, _level - 1);
+				_attack = 30;
+
+				sqlcommand = sqlcommand + std::to_wstring(_x) + L", " + std::to_wstring(_y) + L", " + wName;
+				retcode = SQLExecDirect(hstmt, (SQLWCHAR*)sqlcommand.data(), SQL_NTS);
+				SQLCloseCursor(hstmt);
+			}
+			else {
+				strcpy_s(_name, p->name);
+				_x = db_x;
+				_y = db_y;
+
+				_max_hp = db_max_hp; _hp = db_hp;
+				_level = db_level; _exp = db_exp;
+				_need_exp = 100 * pow(2, _level - 1);
+				_attack = 30 + (_level * 15);
 			}
 		}
 
-
-		strcpy_s(_name, p->name);
-		_x = db_x;
-		_y = db_y;
-		
-		_max_hp = db_max_hp; _hp = db_hp;
-		_level = db_level; _exp = db_exp;
 
 		{
 			std::lock_guard<std::mutex> ll{ _s_lock };
@@ -107,6 +142,10 @@ void SESSION::process_packet(char* packet)
 			ply->do_send_player_enter(_id);
 			do_send_player_enter(ply->_id);
 		}
+
+		g_tl.lock();
+		g_eventq.emplace(event_type{ _id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), PL_HEAL, 0 });
+		g_tl.unlock();
 	}
 		break;
 	case C2S_P_MOVE: {
@@ -114,10 +153,10 @@ void SESSION::process_packet(char* packet)
 
 		short x = _x, y = _y;
 		switch (p->direction) {
-		case 0: if (y > 0) y--; break;
-		case 1: if (y < MAP_HEIGHT - 1) y++; break;
-		case 2: if (x > 0) x--; break;
-		case 3: if (x < MAP_WIDTH - 1) x++; break;
+		case MOVE_UP: if (y > 0) y--; break;
+		case MOVE_DOWN: if (y < MAP_HEIGHT - 1) y++; break;
+		case MOVE_LEFT: if (x > 0) x--; break;
+		case MOVE_RIGHT: if (x < MAP_WIDTH - 1) x++; break;
 		}
 
 		if (g_obstacles[y][x])
@@ -130,19 +169,19 @@ void SESSION::process_packet(char* packet)
 		if (_sector_coord[0] != sx || _sector_coord[1] != sy) {
 			g_sl.lock();
 			switch (p->direction) {
-			case 0:
+			case MOVE_UP:
 				g_sector[sx + 1][sy].erase(_id);
 				g_sector[sx][sy].insert(_id);
 				break;
-			case 1:
+			case MOVE_DOWN:
 				g_sector[sx - 1][sy].erase(_id);
 				g_sector[sx][sy].insert(_id);
 				break;
-			case 2:
+			case MOVE_LEFT:
 				g_sector[sx][sy + 1].erase(_id);
 				g_sector[sx][sy].insert(_id);
 				break;
-			case 3:
+			case MOVE_RIGHT:
 				g_sector[sx][sy - 1].erase(_id);
 				g_sector[sx][sy].insert(_id);
 				break;
@@ -187,7 +226,7 @@ void SESSION::process_packet(char* packet)
 			std::shared_ptr<SESSION> cpl = g_users.at(pl);
 			if (nullptr == cpl)
 				continue;
-			//if (is_pc(pl)) {
+			if (is_pc(pl)) {
 				cpl->_vl.lock();
 				if (cpl->_view_list.count(_id)) {
 					cpl->_vl.unlock();
@@ -197,10 +236,13 @@ void SESSION::process_packet(char* packet)
 					cpl->_vl.unlock();
 					cpl->do_send_player_enter(_id);
 				}
-			/*}
+			}
 			else {
-				cpl->wakeup(c_id);
-			}*/
+				if (_x == cpl->_x && _y == cpl->_y) {
+					_hp -= 10;
+					do_send_stat();
+				}
+			}
 
 				if (old_vlist.count(pl) == 0)
 					do_send_player_enter(pl);
@@ -438,6 +480,30 @@ void SESSION::do_send_chat_packet(char* str, long long id)
 	p.id = id;
 	strcpy_s(p.message, str);
 	do_send(&p);
+}
+
+void SESSION::do_send_stat()
+{
+	sc_packet_stat_change p;
+	p.size = sizeof(p);
+	p.type = S2C_P_STAT_CHANGE;
+	p.id = _id;
+	p.max_hp = _max_hp;
+	p.hp = _hp;
+	p.level = _level;
+	p.exp = _exp;
+	do_send(&p);
+}
+
+void SESSION::do_heal_and_send()
+{
+	short m = _max_hp;
+	short hp = _hp;
+	hp += m / 10;
+	if (hp > m)
+		hp = m;
+	_hp = hp;
+	do_send_stat();
 }
 
 void SESSION::do_send_move()

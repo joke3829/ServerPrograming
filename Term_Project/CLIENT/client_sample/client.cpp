@@ -160,20 +160,20 @@ void client_initialize()
 	avatar.move(4, 4);
 
 	g_myChatMess.setFont(g_font);
-	g_myChatMess.setFillColor(sf::Color(255, 255, 255));
+	g_myChatMess.setFillColor(sf::Color(255, 0, 0));
 	g_myChatMess.setStyle(sf::Text::Bold);
 
 	g_Systemmess.setFont(g_font);
-	g_Systemmess.setFillColor(sf::Color(255, 255, 255));
+	g_Systemmess.setFillColor(sf::Color(255, 0, 0));
 	g_Systemmess.setStyle(sf::Text::Bold);
 
 	g_ChatModState.setFont(g_font);
 	g_ChatModState.setString("Chat Mod On!");
-	g_ChatModState.setFillColor(sf::Color(255, 255, 255));
+	g_ChatModState.setFillColor(sf::Color(255, 0, 0));
 	g_ChatModState.setStyle(sf::Text::Bold);
 
 	g_myStat.setFont(g_font);
-	g_myStat.setFillColor(sf::Color(255, 255, 255));
+	g_myStat.setFillColor(sf::Color(255, 0, 0));
 	g_myStat.setStyle(sf::Text::Bold);
 
 	std::ifstream inFile{ "map.bin", std::ios::binary };
@@ -204,7 +204,7 @@ void ProcessPacket(char* ptr)
 		avatar.hp = packet->hp;
 		avatar.level = packet->level;
 		avatar.exp = packet->exp;
-		avatar.need_exp = static_cast<int>(static_cast<float>(avatar.level) * 1.5);
+		avatar.need_exp = 100 * pow(2, avatar.level - 1);
 		avatar.move(packet->x, packet->y);
 		g_left_x = packet->x - SCREEN_WIDTH / 2;
 		g_top_y = packet->y - SCREEN_HEIGHT / 2;
@@ -252,8 +252,29 @@ void ProcessPacket(char* ptr)
 			players[id].set_name(my_packet->name);
 			players[id].show();
 		}
-		else {
+		else if (id >= MAX_USER && id < MAX_USER + 80000) {	// peace fix
 			players[id] = OBJECT{ *pieces, 256, 0, 64, 64 };
+			players[id].id = id;
+			players[id].move(my_packet->x, my_packet->y);
+			players[id].set_name(my_packet->name);
+			players[id].show();
+		}
+		else if (id >= MAX_USER && id < MAX_USER + 120000) {// piece roming
+			players[id] = OBJECT{ *pieces, 320, 0, 64, 64 };
+			players[id].id = id;
+			players[id].move(my_packet->x, my_packet->y);
+			players[id].set_name(my_packet->name);
+			players[id].show();
+		}
+		else if (id >= MAX_USER && id < MAX_USER + 180000) {// agro fix
+			players[id] = OBJECT{ *pieces, 192, 0, 64, 64 };
+			players[id].id = id;
+			players[id].move(my_packet->x, my_packet->y);
+			players[id].set_name(my_packet->name);
+			players[id].show();
+		}
+		else {												// agro roming
+			players[id] = OBJECT{ *pieces, 64, 0, 64, 64 };
 			players[id].id = id;
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
@@ -312,9 +333,19 @@ void ProcessPacket(char* ptr)
 		while (chatlog.size() > 10) {
 			chatlog.pop_back();
 		}
+		g_sysmess_time = chrono::system_clock::now() + chrono::seconds(3);
 
 		break;
 	}
+	case S2C_P_STAT_CHANGE: {
+		sc_packet_stat_change* my_packet = reinterpret_cast<sc_packet_stat_change*>(ptr);
+		avatar.max_hp = my_packet->max_hp;
+		avatar.hp = my_packet->hp;
+		avatar.exp = my_packet->exp;
+		avatar.level = my_packet->level;
+		avatar.need_exp = 100 * pow(2, avatar.level - 1);
+	}
+						  break;
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[1]);
 	}
@@ -369,6 +400,7 @@ void client_main()
 			int tile_x = i + g_left_x;
 			int tile_y = j + g_top_y;
 			if ((tile_x < 0) || (tile_y < 0)) continue;
+			if ((tile_x) >= 2000 || (tile_y) >= 2000) continue;
 			if (g_obstacles[tile_y][tile_x]) {
 				obstacle_tile.a_move(TILE_RECT_SIZE * i, TILE_RECT_SIZE * j);
 				obstacle_tile.a_draw();
@@ -400,10 +432,15 @@ void client_main()
 	g_myStat.setPosition(0, 50);
 	g_window->draw(g_myStat);
 
-	/*if (g_sysmess_time >= chrono::system_clock::now()) {
-		g_Systemmess.setPosition(0, 50);
-		g_window->draw(g_Systemmess);
-	}*/
+	if (g_sysmess_time >= chrono::system_clock::now() || g_chat) {
+		int y = 210;
+		for (auto& c : chatlog) {
+			g_Systemmess.setString(c);
+			g_Systemmess.setPosition(0, y);
+			g_window->draw(g_Systemmess);
+			y += 30;
+		}
+	}
 	if (g_chat) {
 		g_myChatMess.setString(chatbuf);
 		g_myChatMess.setPosition(0, 180);
@@ -411,14 +448,6 @@ void client_main()
 
 		g_ChatModState.setPosition(0, 150);
 		g_window->draw(g_ChatModState);
-	}
-
-	int y = 210;
-	for (auto& c : chatlog) {
-		g_Systemmess.setString(c);
-		g_Systemmess.setPosition(0, y);
-		g_window->draw(g_Systemmess);
-		y += 30;
 	}
 }
 
@@ -478,62 +507,74 @@ int main()
 				}
 			}
 			if (event.type == sf::Event::KeyPressed) {
-				int direction = -1;
+				char direction = -1;
 				switch (event.key.code) {
-					if (!g_chat) {
 				case sf::Keyboard::Left:
-					direction = 2;
+					if(!g_chat)
+					direction = MOVE_LEFT;
 					break;
 				case sf::Keyboard::Right:
-					direction = 3;
+					if (!g_chat)
+					direction = MOVE_RIGHT;
 					break;
 				case sf::Keyboard::Up:
-					direction = 0;
+					if (!g_chat)
+					direction = MOVE_UP;
 					break;
 				case sf::Keyboard::Down:
-					direction = 1;
+					if (!g_chat)
+					direction = MOVE_DOWN;
 					break;
 				case sf::Keyboard::Num1:{
-					cs_packet_warp p;
-					p.size = sizeof(p);
-					p.type = C2S_P_WARP;
-					p.zone = 1;
-					send_packet(&p);
+					if (!g_chat) {
+						cs_packet_warp p;
+						p.size = sizeof(p);
+						p.type = C2S_P_WARP;
+						p.zone = 1;
+						send_packet(&p);
+					}
 				}
 					break;
 				case sf::Keyboard::Num2: {
-					cs_packet_warp p;
-					p.size = sizeof(p);
-					p.type = C2S_P_WARP;
-					p.zone = 2;
-					send_packet(&p);
+					if (!g_chat) {
+						cs_packet_warp p;
+						p.size = sizeof(p);
+						p.type = C2S_P_WARP;
+						p.zone = 2;
+						send_packet(&p);
+					}
 				}
 									   break;
 				case sf::Keyboard::Num3: {
-					cs_packet_warp p;
-					p.size = sizeof(p);
-					p.type = C2S_P_WARP;
-					p.zone = 3;
-					send_packet(&p);
+					if (!g_chat) {
+						cs_packet_warp p;
+						p.size = sizeof(p);
+						p.type = C2S_P_WARP;
+						p.zone = 3;
+						send_packet(&p);
+					}
 				}
 									   break;
 				case sf::Keyboard::Num4: {
-					cs_packet_warp p;
-					p.size = sizeof(p);
-					p.type = C2S_P_WARP;
-					p.zone = 4;
-					send_packet(&p);
+					if (!g_chat) {
+						cs_packet_warp p;
+						p.size = sizeof(p);
+						p.type = C2S_P_WARP;
+						p.zone = 4;
+						send_packet(&p);
+					}
 				}
 									   break;
 				case sf::Keyboard::Num9: {
-					cs_packet_warp p;
-					p.size = sizeof(p);
-					p.type = C2S_P_WARP;
-					p.zone = 0;
-					send_packet(&p);
+					if (!g_chat) {
+						cs_packet_warp p;
+						p.size = sizeof(p);
+						p.type = C2S_P_WARP;
+						p.zone = 0;
+						send_packet(&p);
+					}
 				}
 									   break;
-					}
 				case sf::Keyboard::Escape:
 					window.close();
 					break;

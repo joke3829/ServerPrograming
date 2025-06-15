@@ -8,6 +8,8 @@
 #include <unordered_map>
 #include <string>
 #include <fstream>
+#include <queue>
+#include <chrono>
 
 #define NOMINMAX
 #include <WS2tcpip.h>
@@ -25,4 +27,13 @@
 constexpr int VIEW_RANGE = 7;
 constexpr int SECTOR_SIZE = 20;
 
+constexpr short NPC_PEACE_FIX = 0;
+constexpr short NPC_PEACE_ROMING = 1;
+constexpr short NPC_AGRO_FIX = 2;
+constexpr short NPC_AGRO_ROMING = 3;
+
 enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
+
+bool is_pc(long long id);
+
+short getNPCType(long long id);

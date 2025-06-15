@@ -15,9 +15,12 @@ thread_local SQLWCHAR szName[MAX_ID_LENGTH];
 thread_local SQLINTEGER db_x, db_y, db_max_hp, db_hp, db_level, db_exp;
 thread_local SQLLEN cbName = 0, cb_db_x = 0, cb_db_y = 0, cb_db_max_hp = 0, cb_db_hp = 0, cb_db_level = 0, cb_db_exp = 0;
 
+extern std::mutex g_tl;
+extern std::priority_queue<event_type> g_eventq;
+
 void CServer::SetUp()
 {
-	ReadySocket();
+	ReadySocket();	
 
 	// Read Map
 	std::ifstream inFile{ "map.bin", std::ios::binary };
@@ -62,7 +65,7 @@ void CServer::worker_thread()
 		if (ret == FALSE) {
 			if (ex_over->_comp_type == OP_ACCEPT) std::cout << "Accept Error" << std::endl;
 			else {
-				std::cout << "잘못됐어요" << std::endl;
+				std::cout << key << "client disconnet" << std::endl;
 				std::shared_ptr<SESSION> pp = g_users.at(key);
 				if (nullptr != pp) pp->disconnect();
 				g_users.at(key) = nullptr;
@@ -75,7 +78,7 @@ void CServer::worker_thread()
 			std::shared_ptr<SESSION> pp = g_users.at(key);
 			if (nullptr != pp) pp->disconnect();
 			g_users.at(key) = nullptr;
-			std::cout << "이상해요" << std::endl;
+			std::cout << key << "client disconnet" << std::endl;
 			if (ex_over->_comp_type == OP_SEND)
 				delete ex_over;
 			continue;
@@ -126,6 +129,14 @@ void CServer::worker_thread()
 			player->do_recv();
 		}
 					break;
+		case OP_PL_HEAL: {
+			std::shared_ptr<SESSION> player = g_users.at(key);
+			if (nullptr == player)
+				break;
+			player->do_heal_and_send();
+			delete ex_over;
+		}
+					   break;
 		}
 	}
 
@@ -135,6 +146,39 @@ void CServer::worker_thread()
 	SQLFreeHandle(SQL_HANDLE_ENV, henv);
 }
 
+void CServer::Timer_thread()
+{
+	do {
+		do {
+			g_tl.lock();
+			if (g_eventq.empty() == true) {
+				g_tl.unlock();
+				break;
+			}
+			auto& k = g_eventq.top();
+			if (k.wakeup_time > std::chrono::high_resolution_clock::now()) {
+				g_tl.unlock();
+				break;
+			}
+
+			switch (k.event_id) {
+			case PL_HEAL:
+				EX_OVER* o = new EX_OVER;
+				o->_comp_type = OP_PL_HEAL;
+				PostQueuedCompletionStatus(_h_iocp, 1, k.obj_id, &o->_over);
+				g_eventq.emplace(event_type{ k.obj_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), PL_HEAL, 0 });
+				g_tl.unlock();
+				break;
+			}
+
+			g_tl.lock();
+			g_eventq.pop();
+			g_tl.unlock();
+		} while (true);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	} while (true);
+}
+
 void CServer::Run()
 {
 	int num_thread = std::thread::hardware_concurrency();
@@ -142,6 +186,9 @@ void CServer::Run()
 
 	for (int i = 0; i < num_thread; ++i)
 		threads.emplace_back(&CServer::worker_thread, this);
+
+	std::thread timer_thread{ &CServer::Timer_thread, this };
+	timer_thread.join();
 
 	for (auto& t : threads)
 		t.join();
@@ -171,5 +218,643 @@ void CServer::ReadyIOCP()
 
 void CServer::ReadyNPC()
 {
+	long long id = MAX_USER;
+	for (int cnt = 0; cnt < 80000; ++cnt) {	// NPC_PEACE_FIX
+		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
+		p->_id = id++;
+		sprintf_s(p->_name, "PMan%d", p->_id);
 
+		short x, y, dir;
+		switch (cnt / 10000) {
+		case 0: {
+			x = rand() % 598;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 1: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 2: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 3: {
+			x = rand() % 598;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 4: {
+			x = rand() % 794 + 602;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 5: {
+			x = rand() % 794 + 602;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 6: {
+			x = rand() % 598;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 7: {
+			x = rand() % 598 + 1402;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		}
+		
+
+		p->_x = x; p->_y = y;
+
+		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
+		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
+
+		g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(p->_id);
+
+		p->_state = ST_INGAME;
+
+		p->_max_hp = p->_hp = 100;
+
+		// Peace Fix만의 lua 추가(필요하면)
+
+		g_users.insert(std::make_pair(p->_id, p));
+	}
+	for (int cnt = 0; cnt < 40000; ++cnt) {	// NPC_PEACE_ROMING
+		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
+		p->_id = id++;
+		sprintf_s(p->_name, "PMan%d", p->_id);
+
+		short x, y, dir;
+		switch (cnt / 5000) {
+		case 0: {
+			x = rand() % 598;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 1: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 2: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 3: {
+			x = rand() % 598;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 4: {
+			x = rand() % 794 + 602;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 5: {
+			x = rand() % 794 + 602;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 6: {
+			x = rand() % 598;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 7: {
+			x = rand() % 598 + 1402;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		}
+
+
+		p->_x = x; p->_y = y;
+
+		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
+		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
+
+		g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(p->_id);
+
+		p->_state = ST_INGAME;
+
+		p->_max_hp = p->_hp = 100;
+
+		// Peace Roming만의 lua 추가(필요하면)
+
+		g_users.insert(std::make_pair(p->_id, p));
+	}
+	for (int cnt = 0; cnt < 60000; ++cnt) {	// NPC_AGRO_FIX
+		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
+		p->_id = id++;
+		sprintf_s(p->_name, "AMan%d", p->_id);
+
+		short x, y, dir;
+		switch (cnt / 7500) {
+		case 0: {
+			x = rand() % 598;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 1: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 2: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 3: {
+			x = rand() % 598;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 4: {
+			x = rand() % 794 + 602;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 5: {
+			x = rand() % 794 + 602;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 6: {
+			x = rand() % 598;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 7: {
+			x = rand() % 598 + 1402;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		}
+
+
+		p->_x = x; p->_y = y;
+
+		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
+		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
+
+		g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(p->_id);
+
+		p->_state = ST_INGAME;
+
+		p->_max_hp = p->_hp = 100;
+
+		// Agro Fix만의 lua 추가(필요하면)
+
+		g_users.insert(std::make_pair(p->_id, p));
+	}
+	for (int cnt = 0; cnt < 20000; ++cnt) {	// NPC_AGRO_FIX
+		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
+		p->_id = id++;
+		sprintf_s(p->_name, "AMan%d", p->_id);
+
+		short x, y, dir;
+		switch (cnt / 7500) {
+		case 0: {
+			x = rand() % 598;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 1: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 2: {
+			x = rand() % 598 + 1402;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 3: {
+			x = rand() % 598;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 4: {
+			x = rand() % 794 + 602;
+			y = rand() % 598;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 5: {
+			x = rand() % 794 + 602;
+			y = rand() % 598 + 1402;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 6: {
+			x = rand() % 598;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					++x;
+					break;
+				case 1:
+					++y;
+					break;
+				}
+			}
+		}
+			  break;
+		case 7: {
+			x = rand() % 598 + 1402;
+			y = rand() % 794 + 602;
+			dir = rand() % 2;
+			while (g_obstacles[y][x]) {
+				switch (dir) {
+				case 0:
+					--x;
+					break;
+				case 1:
+					--y;
+					break;
+				}
+			}
+		}
+			  break;
+		}
+
+
+		p->_x = x; p->_y = y;
+
+		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
+		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
+
+		g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(p->_id);
+
+		p->_state = ST_INGAME;
+
+		p->_max_hp = p->_hp = 100;
+
+		// Agro Roming만의 lua 추가(필요하면)
+
+		g_users.insert(std::make_pair(p->_id, p));
+	}
+
+/*for (long long id = MAX_USER; id < MAX_USER + NUM_MONSTER; ++id) {
+	std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
+	p->_id = id;
+	sprintf_s(p->_name, "PMan%d", p->_id);
+
+	short x, y;
+	x = rand() % 2000;
+	y = rand() % 2000;
+
+	p->_x = x; p->_y = y;
+
+	p->_sector_coord[0] = p->_y / SECTOR_SIZE;
+	p->_sector_coord[1] = p->_x / SECTOR_SIZE;
+
+	g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(id);
+
+	p->_state = ST_INGAME;
+
+	p->_max_hp = p->_hp = 100;
+
+	// Peace Fix만의 lua 추가(필요하면)
+
+	g_users.insert(std::make_pair(id, p));
+}*/
+	std::cout << "NPC_Ready" << std::endl;
 }

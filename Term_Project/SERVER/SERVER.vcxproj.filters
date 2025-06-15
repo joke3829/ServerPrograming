@@ -30,6 +30,9 @@
     <ClCompile Include="SESSION.cpp">
       <Filter>SESSION</Filter>
     </ClCompile>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="game_header.h">

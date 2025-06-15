@@ -1,7 +1,22 @@
 #pragma once
 #include "stdafx.h"
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND };
+enum EVENT_TYPE { PL_HEAL };
+
+struct event_type {
+	long long obj_id;
+	std::chrono::high_resolution_clock::time_point wakeup_time;
+	EVENT_TYPE event_id;
+	int target_id;
+
+	constexpr bool operator < (const event_type& _Left) const
+	{
+		return (wakeup_time > _Left.wakeup_time);
+	}
+};
+
+
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_PL_HEAL };
 class EX_OVER {
 public:
 	EX_OVER()
@@ -30,6 +45,7 @@ public:
 
 class SESSION {
 public:
+	SESSION() {};
 	SESSION(long long id, SOCKET s);
 	~SESSION();
 
@@ -52,6 +68,9 @@ public:
 
 	void do_send_chat_packet(char* str, long long id = -1);
 
+	void do_send_stat();
+	void do_heal_and_send();
+
 	void do_send_move();
 	void do_send_move(long long id);
 	void do_send(void* packet);
@@ -59,7 +78,7 @@ public:
 	void disconnect();
 
 
-protected:
+public:
 	long long				_id{};
 	SOCKET					_socket;
 
@@ -69,8 +88,10 @@ protected:
 	char					_name[MAX_ID_LENGTH];
 	short					_x, _y;
 
-	short					_max_hp, _hp;
-	short					_level, _exp;
+	std::atomic<short>		_hp;
+	short					_level, _exp, _max_hp;
+	short					_need_exp;
+	short					_attack;
 
 	std::mutex				_s_lock;
 	S_STATE					_state;

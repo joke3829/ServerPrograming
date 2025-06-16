@@ -1,13 +1,31 @@
 #pragma once
 #include "stdafx.h"
 
-enum EVENT_TYPE { PL_HEAL };
+struct NODE {
+	short _x;
+	short _y;
+
+	int _h;
+	int _g;
+
+	NODE* _parent;
+	NODE(short x, short y, int h, int g, NODE* parent)
+		: _x(x), _y(y), _h(h), _g(g), _parent(parent)
+	{
+	}
+	constexpr bool operator < (const NODE* _Left) const
+	{
+		return ( _h + _g > _Left->_h + _Left->_g);
+	}
+};
+
+enum EVENT_TYPE { PL_HEAL, EV_NPC_AI };
 
 struct event_type {
 	long long obj_id;
 	std::chrono::high_resolution_clock::time_point wakeup_time;
 	EVENT_TYPE event_id;
-	int target_id;
+	long long target_id;
 
 	constexpr bool operator < (const event_type& _Left) const
 	{
@@ -16,7 +34,7 @@ struct event_type {
 };
 
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_PL_HEAL };
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_PL_HEAL, OP_NPC_AI };
 class EX_OVER {
 public:
 	EX_OVER()
@@ -77,7 +95,10 @@ public:
 
 	void disconnect();
 
-
+	void wake_up(long long id = -1);
+	int do_npc_move();
+	int do_check_near_user();
+	int do_npc_chase(long long id);
 public:
 	long long				_id{};
 	SOCKET					_socket;
@@ -86,7 +107,11 @@ public:
 	int						_remained{};
 
 	char					_name[MAX_ID_LENGTH];
+
+	std::mutex				_cl;		// 부적절?
 	short					_x, _y;
+
+	short					_ix, _iy;	// 최초 위치
 
 	std::atomic<short>		_hp;
 	short					_level, _exp, _max_hp;
@@ -100,5 +125,22 @@ public:
 	std::unordered_set<long long>	_view_list;
 
 	short					_sector_coord[2] = { 0, 0 };
+
+	std::chrono::high_resolution_clock::time_point _attack_term;
+	std::chrono::high_resolution_clock::time_point _move_term;
+	std::chrono::high_resolution_clock::time_point _revive_term;
+	std::chrono::high_resolution_clock::time_point _path_trace_term;
+
+	std::atomic<bool>								_alive = false;
+	short											_npc_type;
+	short											_in_section;
+	
+	std::mutex										_ll;
+	lua_State*										_lua_machine;
+
+	std::stack<NODE>								_path;
+	short											_no_near{};
+
+	unsigned	_move_time;
 };
 

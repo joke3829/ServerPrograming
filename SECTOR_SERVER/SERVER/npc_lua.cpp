@@ -806,7 +806,7 @@ void InitializeNPC()
 		auto L = p->_L = luaL_newstate();
 		luaL_openlibs(L);
 		luaL_loadfile(L, "npc.lua");
-		lua_pcall(L, 0, 0, 0);
+		int ret = lua_pcall(L, 0, 0, 0);
 
 		lua_getglobal(L, "set_uid");
 		lua_pushnumber(L, new_npc_id);

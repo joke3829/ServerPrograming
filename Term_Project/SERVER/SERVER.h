@@ -24,3 +24,6 @@ protected:
 	std::atomic<long long> _uid{ 0 };
 };
 
+int API_Roming(lua_State* L);
+int API_Chase_target(lua_State* L);
+int API_CheckUser(lua_State* L);

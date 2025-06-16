@@ -52,6 +52,7 @@ struct sc_packet_move {
 	char type;
 	long long id;
 	short x, y;
+	unsigned int move_time;
 };
 
 struct sc_packet_enter {
@@ -109,6 +110,8 @@ struct cs_packet_move {
 	unsigned char  size;
 	char  type;
 	char  direction;
+
+	unsigned move_time;
 };
 
 struct cs_packet_attack {

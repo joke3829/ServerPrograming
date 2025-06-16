@@ -116,6 +116,7 @@ public:
 	void set_name(const char str[]) {
 		m_name.setFont(g_font);
 		m_name.setString(str);
+		strcpy_s(name, str);
 		if (id < MAX_USER) m_name.setFillColor(sf::Color(255, 255, 255));
 		else m_name.setFillColor(sf::Color(255, 255, 0));
 		m_name.setStyle(sf::Text::Bold);
@@ -160,20 +161,20 @@ void client_initialize()
 	avatar.move(4, 4);
 
 	g_myChatMess.setFont(g_font);
-	g_myChatMess.setFillColor(sf::Color(255, 0, 0));
+	g_myChatMess.setFillColor(sf::Color(255, 0xA5, 0));
 	g_myChatMess.setStyle(sf::Text::Bold);
 
 	g_Systemmess.setFont(g_font);
-	g_Systemmess.setFillColor(sf::Color(255, 0, 0));
+	g_Systemmess.setFillColor(sf::Color(255, 0xA5, 0));
 	g_Systemmess.setStyle(sf::Text::Bold);
 
 	g_ChatModState.setFont(g_font);
 	g_ChatModState.setString("Chat Mod On!");
-	g_ChatModState.setFillColor(sf::Color(255, 0, 0));
+	g_ChatModState.setFillColor(sf::Color(255, 0xA5, 0));
 	g_ChatModState.setStyle(sf::Text::Bold);
 
 	g_myStat.setFont(g_font);
-	g_myStat.setFillColor(sf::Color(255, 0, 0));
+	g_myStat.setFillColor(sf::Color(255, 0xA5, 0));
 	g_myStat.setStyle(sf::Text::Bold);
 
 	std::ifstream inFile{ "map.bin", std::ios::binary };
@@ -461,7 +462,12 @@ void send_packet(void *packet)
 int main()
 {
 	wcout.imbue(locale("korean"));
-	sf::Socket::Status status = s_socket.connect("127.0.0.1", GAME_PORT);
+	std::string ipaddr;
+	std::cout << "Input IP Address: ";
+	std::cin >> ipaddr;
+	std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+	sf::Socket::Status status = s_socket.connect(ipaddr.data(), GAME_PORT);
 	s_socket.setBlocking(false);
 
 	if (status != sf::Socket::Done) {
@@ -575,6 +581,15 @@ int main()
 					}
 				}
 									   break;
+				case sf::Keyboard::A: {
+					if (!g_chat) {
+						cs_packet_attack p;
+						p.size = sizeof(p);
+						p.type = C2S_P_ATTACK;
+						send_packet(&p);
+					}
+				}
+									break;
 				case sf::Keyboard::Escape:
 					window.close();
 					break;

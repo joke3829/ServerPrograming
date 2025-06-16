@@ -107,6 +107,8 @@ void CServer::worker_thread()
 		}
 					break;
 		case OP_RECV: {
+			if (!g_users.count(key))
+				break;
 			std::shared_ptr<SESSION> player = g_users.at(key);
 			if (nullptr == player)
 				break;
@@ -137,6 +139,19 @@ void CServer::worker_thread()
 			delete ex_over;
 		}
 					   break;
+		case OP_NPC_AI: {
+			std::shared_ptr<SESSION> npc = g_users.at(key);
+			if (nullptr == npc)
+				break;
+			npc->_ll.lock();
+
+			lua_getglobal(npc->_lua_machine, "npcAI");
+			lua_pcall(npc->_lua_machine, 0, 0, 0);
+
+			npc->_ll.unlock();
+			delete ex_over;
+		}
+						break;
 		}
 	}
 
@@ -162,13 +177,30 @@ void CServer::Timer_thread()
 			}
 
 			switch (k.event_id) {
-			case PL_HEAL:
+			case PL_HEAL: {
 				EX_OVER* o = new EX_OVER;
 				o->_comp_type = OP_PL_HEAL;
 				PostQueuedCompletionStatus(_h_iocp, 1, k.obj_id, &o->_over);
 				g_eventq.emplace(event_type{ k.obj_id, std::chrono::high_resolution_clock::now() + std::chrono::seconds(5), PL_HEAL, 0 });
 				g_tl.unlock();
+			}
 				break;
+			case EV_NPC_AI: {
+				std::shared_ptr<SESSION> npc = g_users.at(k.obj_id);
+				if (nullptr == npc) {
+					g_tl.unlock();
+					break;
+				}
+				if (npc->_alive && npc->_revive_term < std::chrono::high_resolution_clock::now()) {
+					EX_OVER* o = new EX_OVER;
+					o->_comp_type = OP_NPC_AI;
+					PostQueuedCompletionStatus(_h_iocp, 1, k.obj_id, &o->_over);
+					g_eventq.emplace(event_type{ k.obj_id, std::chrono::high_resolution_clock::now() + std::chrono::milliseconds(500), EV_NPC_AI, k.target_id });
+				}
+				g_tl.unlock();
+				break;
+			}
+				//break;
 			}
 
 			g_tl.lock();
@@ -222,11 +254,16 @@ void CServer::ReadyNPC()
 	for (int cnt = 0; cnt < 80000; ++cnt) {	// NPC_PEACE_FIX
 		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
 		p->_id = id++;
-		sprintf_s(p->_name, "PMan%d", p->_id);
+		sprintf_s(p->_name, "PMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
 		switch (cnt / 10000) {
 		case 0: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 0;
 			x = rand() % 598;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -243,6 +280,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 1: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 1;
 			x = rand() % 598 + 1402;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -259,6 +301,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 2: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 2;
 			x = rand() % 598 + 1402;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -275,6 +322,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 3: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 3;
 			x = rand() % 598;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -291,6 +343,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 4: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 4;
 			x = rand() % 794 + 602;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -307,6 +364,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 5: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 5;
 			x = rand() % 794 + 602;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -323,6 +385,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 6: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 6;
 			x = rand() % 598;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -339,6 +406,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 7: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 7;
 			x = rand() % 598 + 1402;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -358,6 +430,7 @@ void CServer::ReadyNPC()
 		
 
 		p->_x = x; p->_y = y;
+		p->_ix = x; p->_iy = y;
 
 		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
 		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
@@ -365,21 +438,41 @@ void CServer::ReadyNPC()
 		g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(p->_id);
 
 		p->_state = ST_INGAME;
-
-		p->_max_hp = p->_hp = 100;
+		p->_npc_type = NPC_PEACE_FIX;
 
 		// Peace Fix만의 lua 추가(필요하면)
+		p->_lua_machine = luaL_newstate();
+		luaL_openlibs(p->_lua_machine);
+		luaL_loadfile(p->_lua_machine, "npc_ai.lua");
+		lua_pcall(p->_lua_machine, 0, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_myid");
+		lua_pushnumber(p->_lua_machine, p->_id);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_state");
+		lua_pushnumber(p->_lua_machine, 0);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_register(p->_lua_machine, "API_CheckUser", API_CheckUser);
+		lua_register(p->_lua_machine, "API_Roming", API_Roming);
+		lua_register(p->_lua_machine, "API_Chase_target", API_Chase_target);
 
 		g_users.insert(std::make_pair(p->_id, p));
 	}
 	for (int cnt = 0; cnt < 40000; ++cnt) {	// NPC_PEACE_ROMING
 		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
 		p->_id = id++;
-		sprintf_s(p->_name, "PMan%d", p->_id);
+		sprintf_s(p->_name, "PMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
-		switch (cnt / 5000) {
+		switch (cnt / 10000) {
 		case 0: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 0;
 			x = rand() % 598;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -396,6 +489,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 1: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 1;
 			x = rand() % 598 + 1402;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -412,6 +510,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 2: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 2;
 			x = rand() % 598 + 1402;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -428,6 +531,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 3: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 3;
 			x = rand() % 598;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -444,6 +552,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 4: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 4;
 			x = rand() % 794 + 602;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -460,6 +573,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 5: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 5;
 			x = rand() % 794 + 602;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -476,6 +594,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 6: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 6;
 			x = rand() % 598;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -492,6 +615,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 7: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 7;
 			x = rand() % 598 + 1402;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -511,6 +639,7 @@ void CServer::ReadyNPC()
 
 
 		p->_x = x; p->_y = y;
+		p->_ix = x; p->_iy = y;
 
 		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
 		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
@@ -520,19 +649,40 @@ void CServer::ReadyNPC()
 		p->_state = ST_INGAME;
 
 		p->_max_hp = p->_hp = 100;
-
+		p->_npc_type = NPC_PEACE_ROMING;
 		// Peace Roming만의 lua 추가(필요하면)
+		p->_lua_machine = luaL_newstate();
+		luaL_openlibs(p->_lua_machine);
+		luaL_loadfile(p->_lua_machine, "npc_ai.lua");
+		lua_pcall(p->_lua_machine, 0, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_myid");
+		lua_pushnumber(p->_lua_machine, p->_id);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_state");
+		lua_pushnumber(p->_lua_machine, 2);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_register(p->_lua_machine, "API_CheckUser", API_CheckUser);
+		lua_register(p->_lua_machine, "API_Roming", API_Roming);
+		lua_register(p->_lua_machine, "API_Chase_target", API_Chase_target);
 
 		g_users.insert(std::make_pair(p->_id, p));
 	}
 	for (int cnt = 0; cnt < 60000; ++cnt) {	// NPC_AGRO_FIX
 		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
 		p->_id = id++;
-		sprintf_s(p->_name, "AMan%d", p->_id);
+		sprintf_s(p->_name, "AMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
-		switch (cnt / 7500) {
+		switch (cnt / 10000) {
 		case 0: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 0;
 			x = rand() % 598;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -549,6 +699,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 1: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 1;
 			x = rand() % 598 + 1402;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -565,6 +720,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 2: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 2;
 			x = rand() % 598 + 1402;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -581,6 +741,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 3: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 3;
 			x = rand() % 598;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -597,6 +762,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 4: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 4;
 			x = rand() % 794 + 602;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -613,6 +783,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 5: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 5;
 			x = rand() % 794 + 602;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -629,6 +804,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 6: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 6;
 			x = rand() % 598;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -645,6 +825,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 7: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 7;
 			x = rand() % 598 + 1402;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -664,6 +849,7 @@ void CServer::ReadyNPC()
 
 
 		p->_x = x; p->_y = y;
+		p->_ix = x; p->_iy = y;
 
 		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
 		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
@@ -673,19 +859,41 @@ void CServer::ReadyNPC()
 		p->_state = ST_INGAME;
 
 		p->_max_hp = p->_hp = 100;
-
+		p->_npc_type = NPC_AGRO_FIX;
 		// Agro Fix만의 lua 추가(필요하면)
+
+		p->_lua_machine = luaL_newstate();
+		luaL_openlibs(p->_lua_machine);
+		luaL_loadfile(p->_lua_machine, "npc_ai.lua");
+		lua_pcall(p->_lua_machine, 0, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_myid");
+		lua_pushnumber(p->_lua_machine, p->_id);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_state");
+		lua_pushnumber(p->_lua_machine, 0);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_register(p->_lua_machine, "API_CheckUser", API_CheckUser);
+		lua_register(p->_lua_machine, "API_Roming", API_Roming);
+		lua_register(p->_lua_machine, "API_Chase_target", API_Chase_target);
 
 		g_users.insert(std::make_pair(p->_id, p));
 	}
-	for (int cnt = 0; cnt < 20000; ++cnt) {	// NPC_AGRO_FIX
+	for (int cnt = 0; cnt < 20000; ++cnt) {	// NPC_AGRO_ROMING
 		std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
 		p->_id = id++;
-		sprintf_s(p->_name, "AMan%d", p->_id);
+		sprintf_s(p->_name, "AMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
-		switch (cnt / 7500) {
+		switch (cnt / 10000) {
 		case 0: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 0;
 			x = rand() % 598;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -702,6 +910,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 1: {
+			p->_level = 1;
+			p->_max_hp = 100;
+			p->_hp = 100;
+			p->_attack = 5;
+			p->_in_section = 1;
 			x = rand() % 598 + 1402;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -718,6 +931,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 2: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 2;
 			x = rand() % 598 + 1402;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -734,6 +952,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 3: {
+			p->_level = 3;
+			p->_max_hp = 160;
+			p->_hp = 160;
+			p->_attack = 5;
+			p->_in_section = 3;
 			x = rand() % 598;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -750,6 +973,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 4: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 4;
 			x = rand() % 794 + 602;
 			y = rand() % 598;
 			dir = rand() % 2;
@@ -766,6 +994,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 5: {
+			p->_level = 2;
+			p->_max_hp = 130;
+			p->_hp = 130;
+			p->_attack = 5;
+			p->_in_section = 5;
 			x = rand() % 794 + 602;
 			y = rand() % 598 + 1402;
 			dir = rand() % 2;
@@ -782,6 +1015,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 6: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 6;
 			x = rand() % 598;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -798,6 +1036,11 @@ void CServer::ReadyNPC()
 		}
 			  break;
 		case 7: {
+			p->_level = 4;
+			p->_max_hp = 190;
+			p->_hp = 190;
+			p->_attack = 5;
+			p->_in_section = 7;
 			x = rand() % 598 + 1402;
 			y = rand() % 794 + 602;
 			dir = rand() % 2;
@@ -817,6 +1060,7 @@ void CServer::ReadyNPC()
 
 
 		p->_x = x; p->_y = y;
+		p->_ix = x; p->_iy = y;
 
 		p->_sector_coord[0] = p->_y / SECTOR_SIZE;
 		p->_sector_coord[1] = p->_x / SECTOR_SIZE;
@@ -826,8 +1070,25 @@ void CServer::ReadyNPC()
 		p->_state = ST_INGAME;
 
 		p->_max_hp = p->_hp = 100;
-
+		p->_npc_type = NPC_AGRO_ROMING;
 		// Agro Roming만의 lua 추가(필요하면)
+
+		p->_lua_machine = luaL_newstate();
+		luaL_openlibs(p->_lua_machine);
+		luaL_loadfile(p->_lua_machine, "npc_ai.lua");
+		lua_pcall(p->_lua_machine, 0, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_myid");
+		lua_pushnumber(p->_lua_machine, p->_id);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_getglobal(p->_lua_machine, "set_state");
+		lua_pushnumber(p->_lua_machine, 2);
+		lua_pcall(p->_lua_machine, 1, 0, 0);
+
+		lua_register(p->_lua_machine, "API_CheckUser", API_CheckUser);
+		lua_register(p->_lua_machine, "API_Roming", API_Roming);
+		lua_register(p->_lua_machine, "API_Chase_target", API_Chase_target);
 
 		g_users.insert(std::make_pair(p->_id, p));
 	}
@@ -857,4 +1118,51 @@ void CServer::ReadyNPC()
 	g_users.insert(std::make_pair(id, p));
 }*/
 	std::cout << "NPC_Ready" << std::endl;
+}
+
+
+int API_Roming(lua_State* L)
+{
+	long long uid = (long long)lua_tointeger(L, -1);
+	lua_pop(L, 2);
+	std::shared_ptr<SESSION> p = g_users.at(uid);
+	if (nullptr == p) return 1;
+	int nextstate = p->do_npc_move();
+
+	lua_pushnumber(L, nextstate);
+	return 1;
+}
+
+int API_Chase_target(lua_State* L)
+{
+	long long target_id = (long long)lua_tointeger(L, -1);
+	long long uid = (long long)lua_tointeger(L, -2);
+	lua_pop(L, 3);
+
+	std::shared_ptr<SESSION> p = g_users.at(uid);
+	if (nullptr == p) return 1;
+	int nextstate = p->do_npc_chase(target_id);
+
+	lua_pushnumber(L, 3);
+	return 1;
+}
+
+int API_CheckUser(lua_State* L)
+{
+	long long uid = (long long)lua_tointeger(L, -1);
+	lua_pop(L, 2);
+	std::shared_ptr<SESSION> p = g_users.at(uid);
+	if (nullptr == p) return 1;
+	int ret = p->do_check_near_user();
+
+	if (ret == -1) 
+		lua_pushnumber(L, 0);
+	else {
+		lua_getglobal(L, "set_target");
+		lua_pushnumber(L, ret);
+		lua_pcall(L, 1, 0, 0);
+		lua_pushnumber(L, 3);
+	}
+
+	return 1;
 }

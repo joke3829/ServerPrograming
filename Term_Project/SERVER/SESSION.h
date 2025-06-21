@@ -5,8 +5,8 @@ struct NODE {
 	short _x;
 	short _y;
 
-	int _h;
-	int _g;
+	int _h;		// 휴리스틱 값
+	int _g;	
 
 	NODE* _parent;
 	NODE(short x, short y, int h, int g, NODE* parent)
@@ -108,7 +108,7 @@ public:
 
 	char					_name[MAX_ID_LENGTH];
 
-	std::mutex				_cl;		// 부적절?
+	std::mutex				_cl;		
 	short					_x, _y;
 
 	short					_ix, _iy;	// 최초 위치

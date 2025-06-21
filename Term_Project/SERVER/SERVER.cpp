@@ -3,7 +3,8 @@
 concurrency::concurrent_unordered_map<long long, std::atomic<std::shared_ptr<SESSION>>> g_users;
 
 std::mutex g_sl;
-std::array<std::array<std::unordered_set<long long>, MAP_WIDTH / SECTOR_SIZE>, MAP_HEIGHT / SECTOR_SIZE> g_sector;
+std::array<std::array<std::unordered_set<long long>, MAP_WIDTH / SECTOR_SIZE>,
+	MAP_HEIGHT / SECTOR_SIZE> g_sector;
 
 std::array<std::array<bool, MAP_WIDTH>, MAP_HEIGHT> g_obstacles;	// use [y][x]
 
@@ -466,7 +467,7 @@ void CServer::ReadyNPC()
 		sprintf_s(p->_name, "PMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
-		switch (cnt / 10000) {
+		switch (cnt / 5000) {
 		case 0: {
 			p->_level = 1;
 			p->_max_hp = 100;
@@ -676,7 +677,7 @@ void CServer::ReadyNPC()
 		sprintf_s(p->_name, "AMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
-		switch (cnt / 10000) {
+		switch (cnt / 7500) {
 		case 0: {
 			p->_level = 1;
 			p->_max_hp = 100;
@@ -887,7 +888,7 @@ void CServer::ReadyNPC()
 		sprintf_s(p->_name, "AMan%d", p->_id - MAX_USER);
 
 		short x, y, dir;
-		switch (cnt / 10000) {
+		switch (cnt / 2500) {
 		case 0: {
 			p->_level = 1;
 			p->_max_hp = 100;
@@ -1092,31 +1093,6 @@ void CServer::ReadyNPC()
 
 		g_users.insert(std::make_pair(p->_id, p));
 	}
-
-/*for (long long id = MAX_USER; id < MAX_USER + NUM_MONSTER; ++id) {
-	std::shared_ptr<SESSION> p = std::make_shared<SESSION>();
-	p->_id = id;
-	sprintf_s(p->_name, "PMan%d", p->_id);
-
-	short x, y;
-	x = rand() % 2000;
-	y = rand() % 2000;
-
-	p->_x = x; p->_y = y;
-
-	p->_sector_coord[0] = p->_y / SECTOR_SIZE;
-	p->_sector_coord[1] = p->_x / SECTOR_SIZE;
-
-	g_sector[p->_sector_coord[0]][p->_sector_coord[1]].insert(id);
-
-	p->_state = ST_INGAME;
-
-	p->_max_hp = p->_hp = 100;
-
-	// Peace Fix만의 lua 추가(필요하면)
-
-	g_users.insert(std::make_pair(id, p));
-}*/
 	std::cout << "NPC_Ready" << std::endl;
 }
 

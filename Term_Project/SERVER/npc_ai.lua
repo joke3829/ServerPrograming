@@ -25,3 +25,5 @@ function npcAI()
 		myState = API_Chase_target(myid, target_id);
 	end
 end
+
+
